@@ -1,0 +1,9 @@
+-fdiagnostics-color=always
+-g
+-lcurl
+-Wall
+-Wextra
+-Ideps
+-lm
+-fsanitize=address
+-fblocks
