@@ -33,6 +33,13 @@ int main(int argc, char const *argv[])
   server.sin_family = AF_INET;
   server.sin_addr.s_addr = INADDR_ANY;
   server.sin_port = htons(port);
+
+  int flag = 1;
+  if (-1 == setsockopt(serverFd, SOL_SOCKET, SO_REUSEADDR, &flag, sizeof(flag)))
+  {
+    perror("setsockopt fail");
+  }
+
   len = sizeof(server);
   if (bind(serverFd, (struct sockaddr *)&server, len) < 0)
   {
@@ -46,8 +53,15 @@ int main(int argc, char const *argv[])
   }
 
   dispatch_semaphore_t exitsignal = dispatch_semaphore_create(0);
-  dispatch_queue_t dq = dispatch_queue_create("data", NULL);
-  dispatch_queue_t dqc = dispatch_queue_create("client", NULL);
+  // dispatch_queue_t dq = dispatch_queue_create("data", NULL); // serial queue
+  dispatch_queue_t dq = dispatch_queue_create("data", DISPATCH_QUEUE_CONCURRENT); // concurrent queue
+  // dispatch_queue_t dq = dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0);     // concurrent queue
+  // dispatch_queue_t dq = dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0);  // concurrent queue
+  // dispatch_queue_t dqc = dispatch_queue_create("client", NULL); // serial queue
+  dispatch_queue_t dqc = dispatch_queue_create("client", DISPATCH_QUEUE_CONCURRENT); // concurrent queue
+
+  // dispatch_queue_t dqc = dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0); // concurrent queue
+  // dispatch_queue_t dqc = dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0); // concurrent queue
   dispatch_source_t ds = dispatch_source_create(DISPATCH_SOURCE_TYPE_READ, serverFd, 0, dq);
 
   dispatch_set_context(ds, &connections);
@@ -55,6 +69,13 @@ int main(int argc, char const *argv[])
   dispatch_source_set_event_handler(ds, ^{
     printf("new source\n");
     struct server_connections *connections = dispatch_get_context(ds);
+
+    if (connections->count > 100)
+    {
+      printf("too many connections\n");
+      // 429: Too Many Requests
+      return;
+    }
 
     struct sockaddr_in client;
     int clientFd;
@@ -160,6 +181,7 @@ int main(int argc, char const *argv[])
   });
 
   dispatch_source_set_cancel_handler(ds, ^{
+    printf("cancel\n");
     int rfd = (int)dispatch_source_get_handle(ds);
     close(rfd);
     dispatch_semaphore_signal(exitsignal);
@@ -177,6 +199,8 @@ int main(int argc, char const *argv[])
   dispatch_release(exitsignal);
 
   close(serverFd);
+
+  printf("server exit\n");
 
   return 0;
 }

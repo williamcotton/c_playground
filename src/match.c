@@ -20,7 +20,6 @@ int main()
     return 1;
   };
 
-  m = 0;
   cursor = source;
   for (m = 0; m < maxMatches; m++)
   {
