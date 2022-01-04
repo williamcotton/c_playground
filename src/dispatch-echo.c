@@ -11,194 +11,125 @@ struct server_connections
   int count;
 };
 
-int main(int argc, char const *argv[])
+int main()
 {
-  // https://mohsensy.github.io/programming/2019/09/25/echo-server-and-client-using-sockets-in-c.html
-  int serverFd;
-  struct server_connections connections;
-  connections.count = 0;
-  struct sockaddr_in server;
-  socklen_t len;
   int port = 1234;
-  if (argc == 2)
+  // Create the socket
+  int servSock = -1;
+  if ((servSock = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP)) < 0)
   {
-    port = atoi(argv[1]);
+    printf("socket() failed");
   }
-  serverFd = socket(AF_INET, SOCK_STREAM, 0);
-  if (serverFd < 0)
-  {
-    perror("Cannot create socket");
-    exit(1);
-  }
-  server.sin_family = AF_INET;
-  server.sin_addr.s_addr = INADDR_ANY;
-  server.sin_port = htons(port);
+
+  // Bind the socket - if the port we want is in use, increment until we find one that isn't
+  struct sockaddr_in echoServAddr;
+  memset(&echoServAddr, 0, sizeof(echoServAddr));
+  echoServAddr.sin_family = AF_INET;
+  echoServAddr.sin_addr.s_addr = htonl(INADDR_ANY);
+  echoServAddr.sin_port = htons(port);
 
   int flag = 1;
-  if (-1 == setsockopt(serverFd, SOL_SOCKET, SO_REUSEADDR, &flag, sizeof(flag)))
+  if (-1 == setsockopt(servSock, SOL_SOCKET, SO_REUSEADDR, &flag, sizeof(flag)))
   {
     perror("setsockopt fail");
   }
 
-  len = sizeof(server);
-  if (bind(serverFd, (struct sockaddr *)&server, len) < 0)
+  if (bind(servSock, (struct sockaddr *)&echoServAddr, sizeof(echoServAddr)) < 0)
   {
     perror("Cannot bind socket");
     exit(2);
   }
-  if (listen(serverFd, 1000) < 0)
+
+  // Make the socket non-blocking
+  if (fcntl(servSock, F_SETFL, O_NONBLOCK) < 0)
   {
-    perror("Listen error");
-    exit(3);
+    shutdown(servSock, SHUT_RDWR);
+    close(servSock);
+    printf("fcntl() failed");
   }
 
-  dispatch_semaphore_t exitsignal = dispatch_semaphore_create(0);
-  // dispatch_queue_t dq = dispatch_queue_create("data", NULL); // serial queue
-  dispatch_queue_t dq = dispatch_queue_create("data", DISPATCH_QUEUE_CONCURRENT); // concurrent queue
-  // dispatch_queue_t dq = dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0);     // concurrent queue
-  // dispatch_queue_t dq = dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0);  // concurrent queue
-  // dispatch_queue_t dqc = dispatch_queue_create("client", NULL); // serial queue
-  dispatch_queue_t dqc = dispatch_queue_create("client", DISPATCH_QUEUE_CONCURRENT); // concurrent queue
-
-  // dispatch_queue_t dqc = dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0); // concurrent queue
-  // dispatch_queue_t dqc = dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0); // concurrent queue
-  dispatch_source_t ds = dispatch_source_create(DISPATCH_SOURCE_TYPE_READ, serverFd, 0, dq);
-
-  dispatch_set_context(ds, &connections);
-
-  dispatch_source_set_event_handler(ds, ^{
-    printf("new source\n");
-    struct server_connections *connections = dispatch_get_context(ds);
-
-    if (connections->count > 100)
+  // Set up the dispatch source that will alert us to new incoming connections
+  dispatch_queue_t q = dispatch_queue_create("server_queue", DISPATCH_QUEUE_CONCURRENT);
+  dispatch_source_t acceptSource = dispatch_source_create(DISPATCH_SOURCE_TYPE_READ, servSock, 0, q);
+  dispatch_source_set_event_handler(acceptSource, ^{
+    const unsigned long numPendingConnections = dispatch_source_get_data(acceptSource);
+    for (unsigned long i = 0; i < numPendingConnections; i++)
     {
-      printf("too many connections\n");
-      // 429: Too Many Requests
-      return;
-    }
+      int clntSock = -1;
+      struct sockaddr_in echoClntAddr;
+      unsigned int clntLen = sizeof(echoClntAddr);
 
-    struct sockaddr_in client;
-    int clientFd;
-
-    socklen_t len = sizeof(client);
-
-    if ((clientFd = accept(serverFd, (struct sockaddr *)&client, &len)) < 0)
-    {
-      perror("accept error");
-      exit(4);
-    }
-
-    connections->count++;
-    dispatch_set_context(ds, connections);
-    printf("total_connections: %d\n", connections->count);
-    char *client_ip = inet_ntoa(client.sin_addr);
-    printf("Accepted new connection from a client %s:%d\n", client_ip, ntohs(client.sin_port));
-
-    dispatch_async(dqc, ^{
-      char buffer[1024];
-      memset(buffer, 0, sizeof(buffer));
-      int size = read(clientFd, buffer, sizeof(buffer));
-      if (size < 0)
+      // Wait for a client to connect
+      if ((clntSock = accept(servSock, (struct sockaddr *)&echoClntAddr, &clntLen)) >= 0)
       {
-        perror("read error");
-        exit(5);
-      }
 
-      printf("%s", buffer);
+        dispatch_queue_t dqc = dispatch_queue_create("client", NULL);
 
-      // a regular expression to match GET /:pathname HTTP/1.1
-      char *pattern = "GET /(.*) HTTP/1.[0-1]";
-      regex_t regex;
-      int reti;
-      size_t nmatch = 2;
-      regmatch_t pmatch[2];
-      reti = regcomp(&regex, pattern, REG_EXTENDED);
-      if (reti)
-      {
-        fprintf(stderr, "Could not compile regex\n");
-        exit(6);
-      }
-      reti = regexec(&regex, buffer, nmatch, pmatch, 0);
-      if (reti == 0)
-      {
-        printf("Matched\n");
-        printf("%lld %lld\n", pmatch[1].rm_so, pmatch[1].rm_eo);
-        char *path = buffer + pmatch[1].rm_so;
-        path[pmatch[1].rm_eo - pmatch[1].rm_so] = 0;
-        printf("path: %s\n", path);
-        char *file = malloc(strlen(path) + 1);
-        strcpy(file, path);
-        printf("file: %s\n", file);
-        char *file_path = malloc(strlen(file) + strlen("./") + 1);
-        strcpy(file_path, "./");
-        strcat(file_path, file);
-        printf("file_path: %s\n", file_path);
-        FILE *fp = fopen(file_path, "r");
-        if (fp == NULL)
-        {
-          printf("File not found\n");
-          char *response = "HTTP/1.1 404 Not Found\r\n\r\n";
-          write(clientFd, response, strlen(response));
-          close(clientFd);
-          return;
-        }
-        char *response = "HTTP/1.1 200 OK\r\n\r\n";
-        write(clientFd, response, strlen(response));
-        while (1)
-        {
-          memset(buffer, 0, sizeof(buffer));
-          size = fread(buffer, 1, sizeof(buffer), fp);
-          if (size < 0)
+        printf("server sock: %d accepted\n", clntSock);
+
+        dispatch_io_t channel = dispatch_io_create(DISPATCH_IO_STREAM, clntSock, dqc, ^(int error) {
+          if (error)
           {
-            perror("read error");
-            exit(5);
+            fprintf(stderr, "Error: %s", strerror(error));
           }
-          if (size == 0)
+          printf("server sock: %d closing\n", clntSock);
+          close(clntSock);
+        });
+
+        // Configure the channel...
+        dispatch_io_set_low_water(channel, 1);
+        dispatch_io_set_high_water(channel, SIZE_MAX);
+
+        // Setup read handler
+        dispatch_io_read(channel, 0, SIZE_MAX, dqc, ^(bool done, dispatch_data_t data, int error) {
+          int close_channel = 0;
+          if (error)
           {
-            break;
+            fprintf(stderr, "Error: %s", strerror(error));
+            close_channel = 1;
           }
-          write(clientFd, buffer, size);
-        }
-        free(file_path);
-        free(file);
-        fclose(fp);
+
+          const size_t rxd = data ? dispatch_data_get_size(data) : 0;
+          if (rxd)
+          {
+            // echo...
+            printf("server sock: %d received: %ld bytes\n", clntSock, (long)rxd);
+            // write it back out; echo!
+            dispatch_io_write(channel, 0, data, dqc, ^(bool done, dispatch_data_t data, int error) {
+              dispatch_io_close(channel, 0);
+            });
+          }
+          else
+          {
+            close_channel = 1;
+          }
+
+          if (close_channel)
+          {
+            dispatch_io_close(channel, DISPATCH_IO_STOP);
+            dispatch_release(channel);
+          }
+        });
       }
       else
       {
-        printf("No match\n");
-        char *response = "HTTP/1.1 404 Not Found\r\n\r\n";
-        write(clientFd, response, strlen(response));
+        printf("accept() failed;\n");
       }
-
-      close(clientFd);
-
-      struct server_connections *connections = dispatch_get_context(ds);
-      connections->count--;
-      dispatch_set_context(ds, connections);
-
-      regfree(&regex);
-    });
+    }
   });
 
-  dispatch_source_set_cancel_handler(ds, ^{
-    printf("cancel\n");
-    int rfd = (int)dispatch_source_get_handle(ds);
-    close(rfd);
-    dispatch_semaphore_signal(exitsignal);
-  });
+  // Resume the source so we're ready to accept once we listen()
+  dispatch_resume(acceptSource);
 
-  printf("waiting for clients\n");
+  // Listen() on the socket
+  if (listen(servSock, SOMAXCONN) < 0)
+  {
+    shutdown(servSock, SHUT_RDWR);
+    close(servSock);
+    printf("listen() failed");
+  }
 
-  dispatch_resume(ds);
   dispatch_main(); // suspend run loop waiting for blocks
-
-  dispatch_semaphore_wait(exitsignal, dispatch_walltime(NULL, DISPATCH_TIME_FOREVER));
-
-  dispatch_release(ds);
-  dispatch_release(dq);
-  dispatch_release(exitsignal);
-
-  close(serverFd);
 
   printf("server exit\n");
 
