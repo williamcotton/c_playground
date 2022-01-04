@@ -6,76 +6,56 @@
 #include <regex.h>
 #include <dispatch/dispatch.h>
 
-struct server_connections
+void new_server(int *serverFd, int port)
 {
-  int count;
-};
+  // Create the socket
+  *serverFd = -1;
+  if ((*serverFd = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP)) < 0)
+  {
+    printf("socket() failed");
+  }
 
-int main(int argc, char const *argv[])
-{
-  // https://mohsensy.github.io/programming/2019/09/25/echo-server-and-client-using-sockets-in-c.html
-  int serverFd;
-  struct server_connections connections;
-  connections.count = 0;
-  struct sockaddr_in server;
-  socklen_t len;
-  int port = 1234;
-  if (argc == 2)
-  {
-    port = atoi(argv[1]);
-  }
-  serverFd = socket(AF_INET, SOCK_STREAM, 0);
-  if (serverFd < 0)
-  {
-    perror("Cannot create socket");
-    exit(1);
-  }
-  server.sin_family = AF_INET;
-  server.sin_addr.s_addr = INADDR_ANY;
-  server.sin_port = htons(port);
+  // Bind the socket - if the port we want is in use, increment until we find one that isn't
+  struct sockaddr_in echoServAddr;
+  memset(&echoServAddr, 0, sizeof(echoServAddr));
+  echoServAddr.sin_family = AF_INET;
+  echoServAddr.sin_addr.s_addr = htonl(INADDR_ANY);
+  echoServAddr.sin_port = htons(port);
 
   int flag = 1;
-  if (-1 == setsockopt(serverFd, SOL_SOCKET, SO_REUSEADDR, &flag, sizeof(flag)))
+  if (-1 == setsockopt(*serverFd, SOL_SOCKET, SO_REUSEADDR, &flag, sizeof(flag)))
   {
     perror("setsockopt fail");
   }
 
-  len = sizeof(server);
-  if (bind(serverFd, (struct sockaddr *)&server, len) < 0)
+  if (bind(*serverFd, (struct sockaddr *)&echoServAddr, sizeof(echoServAddr)) < 0)
   {
     perror("Cannot bind socket");
     exit(2);
   }
-  if (listen(serverFd, 1000) < 0)
+
+  if (listen(*serverFd, 1000) < 0)
   {
     perror("Listen error");
     exit(3);
   }
+}
+
+int main()
+{
+  int serverFd;
+
+  new_server(&serverFd, 1234);
 
   dispatch_semaphore_t exitsignal = dispatch_semaphore_create(0);
-  // dispatch_queue_t dq = dispatch_queue_create("data", NULL); // serial queue
-  dispatch_queue_t dq = dispatch_queue_create("data", DISPATCH_QUEUE_CONCURRENT); // concurrent queue
-  // dispatch_queue_t dq = dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0);     // concurrent queue
-  // dispatch_queue_t dq = dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0);  // concurrent queue
-  // dispatch_queue_t dqc = dispatch_queue_create("client", NULL); // serial queue
+
+  dispatch_queue_t dq = dispatch_queue_create("data", DISPATCH_QUEUE_CONCURRENT);    // concurrent queue
   dispatch_queue_t dqc = dispatch_queue_create("client", DISPATCH_QUEUE_CONCURRENT); // concurrent queue
 
-  // dispatch_queue_t dqc = dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0); // concurrent queue
-  // dispatch_queue_t dqc = dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0); // concurrent queue
   dispatch_source_t ds = dispatch_source_create(DISPATCH_SOURCE_TYPE_READ, serverFd, 0, dq);
-
-  dispatch_set_context(ds, &connections);
 
   dispatch_source_set_event_handler(ds, ^{
     printf("new source\n");
-    struct server_connections *connections = dispatch_get_context(ds);
-
-    if (connections->count > 100)
-    {
-      printf("too many connections\n");
-      // 429: Too Many Requests
-      return;
-    }
 
     struct sockaddr_in client;
     int clientFd;
@@ -95,9 +75,6 @@ int main(int argc, char const *argv[])
       perror("setsockopt fail");
     }
 
-    connections->count++;
-    dispatch_set_context(ds, connections);
-    printf("total_connections: %d\n", connections->count);
     char *client_ip = inet_ntoa(client.sin_addr);
     printf("Accepted new connection from a client %s:%d\n", client_ip, ntohs(client.sin_port));
 
@@ -178,10 +155,6 @@ int main(int argc, char const *argv[])
       }
 
       close(clientFd);
-
-      struct server_connections *connections = dispatch_get_context(ds);
-      connections->count--;
-      dispatch_set_context(ds, connections);
 
       regfree(&regex);
     });
