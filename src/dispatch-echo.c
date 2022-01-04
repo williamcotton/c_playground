@@ -48,10 +48,13 @@ int main()
     printf("fcntl() failed");
   }
 
+  dispatch_semaphore_t exitsignal = dispatch_semaphore_create(0);
+
   // Set up the dispatch source that will alert us to new incoming connections
   dispatch_queue_t q = dispatch_queue_create("server_queue", DISPATCH_QUEUE_CONCURRENT);
   dispatch_source_t acceptSource = dispatch_source_create(DISPATCH_SOURCE_TYPE_READ, servSock, 0, q);
   dispatch_source_set_event_handler(acceptSource, ^{
+    printf("acceptSource\n");
     const unsigned long numPendingConnections = dispatch_source_get_data(acceptSource);
     for (unsigned long i = 0; i < numPendingConnections; i++)
     {
@@ -63,14 +66,16 @@ int main()
       if ((clntSock = accept(servSock, (struct sockaddr *)&echoClntAddr, &clntLen)) >= 0)
       {
 
-        dispatch_queue_t dqc = dispatch_queue_create("client", NULL);
+        dispatch_queue_t dqc = dispatch_queue_create("client", DISPATCH_QUEUE_CONCURRENT);
 
         printf("server sock: %d accepted\n", clntSock);
+
+        dispatch_semaphore_t sem = dispatch_semaphore_create(0);
 
         dispatch_io_t channel = dispatch_io_create(DISPATCH_IO_STREAM, clntSock, dqc, ^(int error) {
           if (error)
           {
-            fprintf(stderr, "Error: %s", strerror(error));
+            fprintf(stderr, "Error: %s\n", strerror(error));
           }
           printf("server sock: %d closing\n", clntSock);
           close(clntSock);
@@ -96,7 +101,7 @@ int main()
             printf("server sock: %d received: %ld bytes\n", clntSock, (long)rxd);
             // write it back out; echo!
             dispatch_io_write(channel, 0, data, dqc, ^(bool done, dispatch_data_t data, int error) {
-              dispatch_io_close(channel, 0);
+              dispatch_semaphore_signal(sem);
             });
           }
           else
@@ -110,6 +115,10 @@ int main()
             dispatch_release(channel);
           }
         });
+        dispatch_semaphore_wait(sem, DISPATCH_TIME_FOREVER);
+        printf("server sock: %d closed\n", clntSock);
+        dispatch_io_close(channel, DISPATCH_IO_STOP);
+        // close(clntSock);
       }
       else
       {
@@ -129,7 +138,17 @@ int main()
     printf("listen() failed");
   }
 
+  dispatch_source_set_cancel_handler(acceptSource, ^{
+    printf("cancel\n");
+    int rfd = (int)dispatch_source_get_handle(acceptSource);
+    close(rfd);
+    dispatch_semaphore_signal(exitsignal);
+  });
+
+  printf("waiting for clients\n");
   dispatch_main(); // suspend run loop waiting for blocks
+
+  dispatch_semaphore_wait(exitsignal, dispatch_walltime(NULL, DISPATCH_TIME_FOREVER));
 
   printf("server exit\n");
 

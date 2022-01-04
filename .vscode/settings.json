@@ -25,7 +25,8 @@
     "__tuple": "c",
     "dispatchqueue.h": "c",
     "istream": "c",
-    "locale": "c"
+    "locale": "c",
+    "__locale": "c"
   },
   "C_Cpp.errorSquiggles": "Disabled"
 }

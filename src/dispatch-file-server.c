@@ -49,8 +49,7 @@ int main()
 
   dispatch_semaphore_t exitsignal = dispatch_semaphore_create(0);
 
-  dispatch_queue_t dq = dispatch_queue_create("data", DISPATCH_QUEUE_CONCURRENT);    // concurrent queue
-  dispatch_queue_t dqc = dispatch_queue_create("client", DISPATCH_QUEUE_CONCURRENT); // concurrent queue
+  dispatch_queue_t dq = dispatch_queue_create("data", DISPATCH_QUEUE_CONCURRENT); // concurrent queue
 
   dispatch_source_t ds = dispatch_source_create(DISPATCH_SOURCE_TYPE_READ, serverFd, 0, dq);
 
@@ -77,6 +76,8 @@ int main()
 
     char *client_ip = inet_ntoa(client.sin_addr);
     printf("Accepted new connection from a client %s:%d\n", client_ip, ntohs(client.sin_port));
+
+    dispatch_queue_t dqc = dispatch_queue_create("client", DISPATCH_QUEUE_CONCURRENT); // concurrent queue
 
     dispatch_async(dqc, ^{
       char buffer[1024];
