@@ -59,37 +59,15 @@ app express()
   };
 
   void (^_get)(char *, void (^)(request_t *, response_t *)) = ^(char *path, void (^handler)(request_t *req, response_t *res)) {
-    char *pattern = malloc(strlen("GET (") + strlen(path) + strlen(") HTTP/1.[0-1]") + 1);
-    sprintf(pattern, "GET (%s) HTTP/1.[0-1]", path);
-
-    char *request = "GET / HTTP/1.1\r\n\r\n";
-
-    regex_t regex;
-    int reti;
-    size_t nmatch = 2;
-    regmatch_t pmatch[2];
-    reti = regcomp(&regex, pattern, REG_EXTENDED);
-    if (reti)
-    {
-      fprintf(stderr, "Could not compile regex\n");
-      exit(6);
-    }
-    reti = regexec(&regex, request, nmatch, pmatch, 0);
-    if (reti == 0)
-    {
-      printf("Matched\n");
-      printf("%lld %lld\n", pmatch[1].rm_so, pmatch[1].rm_eo);
-      char *mpath = request + pmatch[1].rm_so;
-      mpath[pmatch[1].rm_eo - pmatch[1].rm_so] = 0;
-      printf("path: %s\n", mpath);
-      request_t *req = malloc(sizeof(request_t));
-      response_t *res = malloc(sizeof(response_t));
-      res->send = ^(char *data) {
-        printf("%s\n", data);
-      };
-      req->path = mpath;
-      handler(req, res);
-    }
+    request_t *req = malloc(sizeof(request_t));
+    response_t *res = malloc(sizeof(response_t));
+    res->send = ^(char *data) {
+      printf("%s\n", data);
+    };
+    req->path = path;
+    handler(req, res);
+    free(req);
+    free(res);
   };
 
   app app = {
