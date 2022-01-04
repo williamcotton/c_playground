@@ -1,6 +1,6 @@
 TARGETS := $(notdir $(patsubst %.c,%,$(wildcard src/*.c)))
 FLAGS = $(shell cat compile_flags.txt | tr '\n' ' ')
-SRC = src/helpers.c
+SRC = src/helpers.c src/server-helpers.c
 SRC += $(wildcard deps/*/*.c)
 BUILD_DIR = build
 

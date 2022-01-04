@@ -26,7 +26,9 @@
     "dispatchqueue.h": "c",
     "istream": "c",
     "locale": "c",
-    "__locale": "c"
+    "__locale": "c",
+    "server-helpers.h": "c",
+    "unistd.h": "c"
   },
   "C_Cpp.errorSquiggles": "Disabled"
 }
