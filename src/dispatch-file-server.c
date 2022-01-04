@@ -71,6 +71,10 @@ int acceptClient(int servSock)
     shutdown(clntSock, SHUT_RDWR);
     close(clntSock);
   }
+
+  char *client_ip = inet_ntoa(echoClntAddr.sin_addr);
+  printf("Accepted new connection from a client %s:%d\n", client_ip, ntohs(echoClntAddr.sin_port));
+
   return clntSock;
 }
 
@@ -137,6 +141,9 @@ int main()
   int port = 1234;
   int servSock = listenServer(port);
 
+  __block int clientCount = 0;
+  dispatch_queue_t clientCounter = dispatch_queue_create("clientCounter", NULL);
+
   dispatch_queue_t serverQueue = dispatch_queue_create("serverQueue", DISPATCH_QUEUE_CONCURRENT);
   dispatch_source_t acceptSource = dispatch_source_create(DISPATCH_SOURCE_TYPE_READ, servSock, 0, serverQueue);
 
@@ -162,6 +169,12 @@ int main()
           return;
         }
 
+        dispatch_async(clientCounter, ^{
+          clientCount++;
+        });
+
+        printf("Client count: %d\n", clientCount);
+
         printf("Request\n===\n%s\n", request);
 
         FILE *fp = matchFile("GET /files/(.*) HTTP/1.[0-1]", request);
@@ -180,6 +193,9 @@ int main()
           write(clntSock, response, strlen(response));
         }
 
+        dispatch_async(clientCounter, ^{
+          clientCount--;
+        });
         shutdown(clntSock, SHUT_RDWR);
         close(clntSock);
       });
