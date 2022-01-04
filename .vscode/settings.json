@@ -28,7 +28,9 @@
     "locale": "c",
     "__locale": "c",
     "server-helpers.h": "c",
-    "unistd.h": "c"
+    "unistd.h": "c",
+    "__functional_base": "c",
+    "memory": "c"
   },
   "C_Cpp.errorSquiggles": "Disabled"
 }

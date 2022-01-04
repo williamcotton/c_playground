@@ -1,6 +1,11 @@
 #include <stdio.h>
 #include <dispatch/dispatch.h>
 
+int with_callback(int (^callback)(int x))
+{
+  return callback(42);
+}
+
 int main()
 {
   int d = 5;
@@ -61,7 +66,15 @@ int main()
 
   printf("All iterations have completed.\n");
 
+  dispatch_sync(myCustomQueue, ^{
+    printf("Do some more work here.\n");
+  });
+
   dispatch_release(myCustomQueue);
+
+  printf("with_callback: %d\n", with_callback(^(int x) {
+           return x + 1;
+         }));
 
   return 0;
 }
