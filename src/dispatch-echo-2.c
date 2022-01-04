@@ -6,9 +6,8 @@
 #include <regex.h>
 #include <dispatch/dispatch.h>
 
-int main()
+int listenServer(int port)
 {
-  int port = 1234;
 
   // Create the socket
   int servSock = -1;
@@ -51,56 +50,62 @@ int main()
     exit(4);
   }
 
-  // Set up the dispatch source that will alert us to new incoming connections
-  dispatch_queue_t q = dispatch_queue_create("server_queue", DISPATCH_QUEUE_CONCURRENT);
-  dispatch_source_t acceptSource = dispatch_source_create(DISPATCH_SOURCE_TYPE_READ, servSock, 0, q);
+  return servSock;
+}
+
+int acceptClient(int servSock)
+{
+  int clntSock = -1;
+  struct sockaddr_in echoClntAddr;
+  unsigned int clntLen = sizeof(echoClntAddr);
+  if ((clntSock = accept(servSock, (struct sockaddr *)&echoClntAddr, &clntLen)) < 0)
+  {
+    // perror("accept() failed");
+    return clntSock;
+  }
+
+  // Make the socket non-blocking
+  if (fcntl(clntSock, F_SETFL, O_NONBLOCK) < 0)
+  {
+    // perror("fcntl() failed");
+    shutdown(clntSock, SHUT_RDWR);
+    close(clntSock);
+  }
+  return clntSock;
+}
+
+int main()
+{
+  int servSock = listenServer(1234);
+
+  dispatch_queue_t serverQueue = dispatch_queue_create("serverQueue", DISPATCH_QUEUE_CONCURRENT);
+  dispatch_source_t acceptSource = dispatch_source_create(DISPATCH_SOURCE_TYPE_READ, servSock, 0, serverQueue);
+
   dispatch_source_set_event_handler(acceptSource, ^{
-    printf("acceptSource\n");
     const unsigned long numPendingConnections = dispatch_source_get_data(acceptSource);
     for (unsigned long i = 0; i < numPendingConnections; i++)
     {
-      int clntSock = -1;
-      struct sockaddr_in echoClntAddr;
-      unsigned int clntLen = sizeof(echoClntAddr);
-      if ((clntSock = accept(servSock, (struct sockaddr *)&echoClntAddr, &clntLen)) < 0)
-      {
-        perror("accept() failed");
+      int clntSock = acceptClient(servSock);
+      if (clntSock < 0)
         continue;
-      }
 
-      // Make the socket non-blocking
-      if (fcntl(clntSock, F_SETFL, O_NONBLOCK) < 0)
-      {
-        shutdown(clntSock, SHUT_RDWR);
-        close(clntSock);
-        printf("fcntl() failed");
-      }
-
-      // Set up the dispatch source that will alert us to incoming data
-      dispatch_source_t readSource = dispatch_source_create(DISPATCH_SOURCE_TYPE_READ, clntSock, 0, q);
+      dispatch_source_t readSource = dispatch_source_create(DISPATCH_SOURCE_TYPE_READ, clntSock, 0, serverQueue);
       dispatch_source_set_event_handler(readSource, ^{
         char buffer[1024];
         ssize_t numBytes = read(clntSock, buffer, sizeof(buffer));
         if (numBytes < 0)
         {
-          perror("read() failed");
-          shutdown(clntSock, SHUT_RDWR);
-          close(clntSock);
+          // perror("read() failed");
           return;
         }
         else if (numBytes == 0)
         {
-          shutdown(clntSock, SHUT_RDWR);
-          close(clntSock);
           return;
         }
 
-        // Echo the data back to the client
         if (write(clntSock, buffer, numBytes) != numBytes)
         {
-          perror("write() failed");
-          shutdown(clntSock, SHUT_RDWR);
-          close(clntSock);
+          // perror("write() failed");
           return;
         }
         shutdown(clntSock, SHUT_RDWR);
@@ -109,6 +114,7 @@ int main()
       dispatch_resume(readSource);
     }
   });
+
   printf("waiting for clients\n");
   dispatch_resume(acceptSource);
 

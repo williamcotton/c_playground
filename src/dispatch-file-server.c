@@ -168,6 +168,15 @@ int main()
     dispatch_semaphore_signal(exitsignal);
   });
 
+  signal(SIGHUP, SIG_IGN);
+
+  dispatch_source_t sig_src = dispatch_source_create(DISPATCH_SOURCE_TYPE_SIGNAL, SIGHUP, 0, dispatch_get_main_queue());
+  dispatch_source_set_event_handler(sig_src, ^{
+    printf("Caught SIGHUP\n");
+    dispatch_semaphore_signal(exitsignal);
+  });
+  dispatch_resume(sig_src);
+
   printf("waiting for clients\n");
 
   dispatch_resume(ds);
