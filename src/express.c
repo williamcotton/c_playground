@@ -23,7 +23,7 @@ typedef struct
   int status;
 } response_t;
 
-typedef void (^requestHandler)(request_t req, response_t res);
+typedef void (^requestHandler)(request_t *req, response_t *res);
 
 typedef struct
 {
@@ -38,8 +38,16 @@ typedef struct
   requestHandler handler;
 } route_handler_t;
 
+typedef struct
+{
+  int socket;
+  char *ip;
+} client_t;
+
 static route_handler_t *routeHandlers = NULL;
 static int routeHandlerCount = 0;
+static int servSock = -1;
+static dispatch_queue_t serverQueue = NULL;
 
 static void initRouteHandlers()
 {
@@ -52,22 +60,12 @@ static void addRouteHandler(char *method, char *path, requestHandler handler)
   routeHandlers[routeHandlerCount++] = (route_handler_t){.method = method, .path = path, .handler = handler};
 }
 
-static int servSock = -1;
-
-static dispatch_queue_t serverQueue = NULL;
-
 static void initServerQueue()
 {
   serverQueue = dispatch_queue_create("serverQueue", DISPATCH_QUEUE_CONCURRENT);
 }
 
-typedef struct
-{
-  int socket;
-  char *ip;
-} client_t;
-
-client_t acceptClientConnection(int servSock)
+static client_t acceptClientConnection(int servSock)
 {
   int clntSock = -1;
   struct sockaddr_in echoClntAddr;
@@ -91,7 +89,7 @@ client_t acceptClientConnection(int servSock)
   return (client_t){.socket = clntSock, .ip = client_ip};
 }
 
-void initServerSocket()
+static void initServerSocket()
 {
   if ((servSock = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP)) < 0)
   {
@@ -105,7 +103,7 @@ void initServerSocket()
   }
 }
 
-void initServerListen(int port)
+static void initServerListen(int port)
 {
   struct sockaddr_in servAddr;
   memset(&servAddr, 0, sizeof(servAddr));
@@ -133,7 +131,7 @@ void initServerListen(int port)
   }
 };
 
-request_t parseRequest(char *rawRequest, client_t client)
+static request_t parseRequest(char *rawRequest, client_t client)
 {
   request_t req = {.path = NULL, .method = NULL, .headers = NULL, .rawRequest = rawRequest};
   char buf[4096];
@@ -176,7 +174,7 @@ request_t parseRequest(char *rawRequest, client_t client)
   return req;
 }
 
-route_handler_t matchRouteHandler(request_t req)
+static route_handler_t matchRouteHandler(request_t req)
 {
   for (int i = 0; i < routeHandlerCount; i++)
   {
@@ -188,21 +186,21 @@ route_handler_t matchRouteHandler(request_t req)
   return (route_handler_t){.method = NULL, .path = NULL, .handler = NULL};
 }
 
-void closeClientConnection(client_t client)
+static void closeClientConnection(client_t client)
 {
   shutdown(client.socket, SHUT_RDWR);
   close(client.socket);
 }
 
-void freeRequest(request_t req)
+static void freeRequest(request_t req)
 {
   free(req.method);
   free(req.path);
 }
 
-response_t buildResponse()
+static response_t buildResponse()
 {
-  response_t res;
+  __block response_t res;
   res.status = 200;
   return res;
 }
@@ -211,14 +209,14 @@ response_t buildResponse()
 // sprintf(responseString, "HTTP/1.1 %s\r\nContent-Type: %s\r\nContent-Length: %s\r\n\r\n%s", res.status, res.contentType, res.contentLength, res.body);
 // return responseString;
 
-char *buildResponseString(char *data, response_t res)
+static char *buildResponseString(char *data, response_t res)
 {
   char *response = malloc(strlen("HTTP/1.1 200 OK\r\n\r\n") + strlen(data) + 1);
   sprintf(response, "HTTP/1.1 %d OK\r\n\r\n%s", res.status, data);
   return response;
 }
 
-void initClientAcceptEventHandler()
+static void initClientAcceptEventHandler()
 {
   dispatch_source_t acceptSource = dispatch_source_create(DISPATCH_SOURCE_TYPE_READ, servSock, 0, serverQueue);
 
@@ -252,14 +250,14 @@ void initClientAcceptEventHandler()
           return;
         }
 
-        response_t res = buildResponse();
+        __block response_t res = buildResponse();
         res.send = ^(char *data) {
           char *response = buildResponseString(data, res);
           write(client.socket, response, strlen(response));
           free(response);
         };
 
-        routeHandler.handler(req, res);
+        routeHandler.handler(&req, &res);
 
         freeRequest(req);
         closeClientConnection(client);
@@ -284,7 +282,7 @@ app_t express()
     dispatch_main();
   };
 
-  void (^_get)(char *, void (^)(request_t, response_t)) = ^(char *path, requestHandler handler) {
+  void (^_get)(char *, void (^)(request_t *, response_t *)) = ^(char *path, requestHandler handler) {
     addRouteHandler("GET", path, handler);
   };
 
@@ -297,12 +295,13 @@ int main()
   app_t app = express();
   int port = 3000;
 
-  app.get("/", ^(request_t req, response_t res) {
-    res.send("Hello World!");
+  app.get("/", ^(request_t *req, response_t *res) {
+    res->send("Hello World!");
   });
 
-  app.get("/test", ^(request_t req, response_t res) {
-    res.send("Testing, testing!");
+  app.get("/test", ^(request_t *req, response_t *res) {
+    res->status = 201;
+    res->send("Testing, testing!");
   });
 
   app.listen(port, ^{
