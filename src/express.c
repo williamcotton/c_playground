@@ -28,7 +28,7 @@ typedef struct
 typedef struct
 {
   char *path;
-  dispatch_block_t handler;
+  requestHandler handler;
 } route_handler_t;
 
 static route_handler_t *routeHandlers = NULL;
@@ -39,7 +39,7 @@ static void initRouteHandlers()
   routeHandlers = malloc(sizeof(route_handler_t));
 }
 
-static void addRouteHandler(char *path, dispatch_block_t handler)
+static void addRouteHandler(char *path, requestHandler handler)
 {
   routeHandlers = realloc(routeHandlers, sizeof(route_handler_t) * (routeHandlerCount + 1));
   routeHandlers[routeHandlerCount++] = (route_handler_t){.path = path, .handler = handler};
@@ -120,7 +120,7 @@ void initServerListen(int port)
     exit(3);
   }
 
-  if (listen(servSock, 5) < 0)
+  if (listen(servSock, 10000) < 0)
   {
     printf("listen() failed");
   }
@@ -154,9 +154,18 @@ void initClientAcceptEventHandler()
 
         printf("Request\n===\n%s\n", request);
 
-        char *response = "HTTP/1.1 404 Not Found\r\n\r\n";
-        printf("Response\n===\n%s", response);
-        write(client.socket, response, strlen(response));
+        route_handler_t rh = routeHandlers[routeHandlerCount - 1];
+        request_t req;
+        response_t res;
+        res.send = ^(char *data) {
+          char *response = malloc(strlen("HTTP/1.1 200 OK\r\n\r\n") + strlen(data) + 1);
+          sprintf(response, "HTTP/1.1 200 OK\r\n\r\n%s", data);
+
+          printf("Response\n===\n%s", response);
+          write(client.socket, response, strlen(response));
+        };
+        req.path = rh.path;
+        rh.handler(req, res);
 
         shutdown(client.socket, SHUT_RDWR);
         close(client.socket);
@@ -182,16 +191,16 @@ app_t express()
   };
 
   void (^_get)(char *, void (^)(request_t, response_t)) = ^(char *path, requestHandler handler) {
-    request_t req;
-    response_t res;
-    res.send = ^(char *data) {
-      printf("send - %s\n", data);
-    };
-    req.path = path;
-    dispatch_block_t block = Block_copy(^{
-      handler(req, res);
-    });
-    addRouteHandler(path, block);
+    // request_t req;
+    // response_t res;
+    // res.send = ^(char *data) {
+    //   printf("send - %s\n", data);
+    // };
+    // req.path = path;
+    // dispatch_block_t block = Block_copy(^{
+    //   handler(req, res);
+    // });
+    addRouteHandler(path, handler);
   };
 
   app_t app = {.get = _get, .listen = _listen};
@@ -206,9 +215,6 @@ int main()
   app.get("/", ^(request_t req, response_t res) {
     res.send("Hello World!");
   });
-
-  dispatch_block_t handler = routeHandlers[routeHandlerCount - 1].handler;
-  handler();
 
   app.listen(port, ^{
     printf("Example app listening at http://localhost:%d\n", port);
