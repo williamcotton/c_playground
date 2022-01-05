@@ -20,6 +20,7 @@ typedef struct
 typedef struct
 {
   void (^send)(char *);
+  int status;
 } response_t;
 
 typedef void (^requestHandler)(request_t req, response_t res);
@@ -187,6 +188,36 @@ route_handler_t matchRouteHandler(request_t req)
   return (route_handler_t){.method = NULL, .path = NULL, .handler = NULL};
 }
 
+void closeClientConnection(client_t client)
+{
+  shutdown(client.socket, SHUT_RDWR);
+  close(client.socket);
+}
+
+void freeRequest(request_t req)
+{
+  free(req.method);
+  free(req.path);
+}
+
+response_t buildResponse()
+{
+  response_t res;
+  res.status = 200;
+  return res;
+}
+
+// char *responseString = malloc(sizeof(char) * (strlen(data) + strlen(res.status) + strlen(res.contentType) + strlen(res.contentLength) + strlen(res.body) + 10));
+// sprintf(responseString, "HTTP/1.1 %s\r\nContent-Type: %s\r\nContent-Length: %s\r\n\r\n%s", res.status, res.contentType, res.contentLength, res.body);
+// return responseString;
+
+char *buildResponseString(char *data, response_t res)
+{
+  char *response = malloc(strlen("HTTP/1.1 200 OK\r\n\r\n") + strlen(data) + 1);
+  sprintf(response, "HTTP/1.1 %d OK\r\n\r\n%s", res.status, data);
+  return response;
+}
+
 void initClientAcceptEventHandler()
 {
   dispatch_source_t acceptSource = dispatch_source_create(DISPATCH_SOURCE_TYPE_READ, servSock, 0, serverQueue);
@@ -206,8 +237,7 @@ void initClientAcceptEventHandler()
 
         if (req.method == NULL)
         {
-          shutdown(client.socket, SHUT_RDWR);
-          close(client.socket);
+          closeClientConnection(client);
           return;
         }
 
@@ -216,25 +246,23 @@ void initClientAcceptEventHandler()
         if (routeHandler.handler == NULL)
         {
           char *response = "HTTP/1.1 404 Not Found\r\n\r\n";
-          printf("Response\n===\n%s", response);
           write(client.socket, response, strlen(response));
-          shutdown(client.socket, SHUT_RDWR);
-          close(client.socket);
+          freeRequest(req);
+          closeClientConnection(client);
           return;
         }
 
-        response_t res;
+        response_t res = buildResponse();
         res.send = ^(char *data) {
-          char *response = malloc(strlen("HTTP/1.1 200 OK\r\n\r\n") + strlen(data) + 1);
-          sprintf(response, "HTTP/1.1 200 OK\r\n\r\n%s", data);
-          printf("Response\n===\n%s\n", response);
+          char *response = buildResponseString(data, res);
           write(client.socket, response, strlen(response));
+          free(response);
         };
+
         routeHandler.handler(req, res);
-        free(req.path);
-        free(req.method);
-        shutdown(client.socket, SHUT_RDWR);
-        close(client.socket);
+
+        freeRequest(req);
+        closeClientConnection(client);
       });
       dispatch_resume(readSource);
     }
