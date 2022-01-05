@@ -30,7 +30,8 @@
     "server-helpers.h": "c",
     "unistd.h": "c",
     "__functional_base": "c",
-    "memory": "c"
+    "memory": "c",
+    "picohttpparser.h": "c"
   },
   "C_Cpp.errorSquiggles": "Disabled"
 }

@@ -6,10 +6,15 @@
 #include <dispatch/dispatch.h>
 #include <regex.h>
 #include <Block.h>
+#include <picohttpparser/picohttpparser.h>
 
 typedef struct
 {
   char *path;
+  char *method;
+  struct phr_header *headers;
+  int numHeaders;
+  char *rawRequest;
 } request_t;
 
 typedef struct
@@ -27,6 +32,7 @@ typedef struct
 
 typedef struct
 {
+  char *method;
   char *path;
   requestHandler handler;
 } route_handler_t;
@@ -39,10 +45,10 @@ static void initRouteHandlers()
   routeHandlers = malloc(sizeof(route_handler_t));
 }
 
-static void addRouteHandler(char *path, requestHandler handler)
+static void addRouteHandler(char *method, char *path, requestHandler handler)
 {
   routeHandlers = realloc(routeHandlers, sizeof(route_handler_t) * (routeHandlerCount + 1));
-  routeHandlers[routeHandlerCount++] = (route_handler_t){.path = path, .handler = handler};
+  routeHandlers[routeHandlerCount++] = (route_handler_t){.method = method, .path = path, .handler = handler};
 }
 
 static int servSock = -1;
@@ -126,6 +132,61 @@ void initServerListen(int port)
   }
 };
 
+request_t parseRequest(char *rawRequest, client_t client)
+{
+  request_t req = {.path = NULL, .method = NULL, .headers = NULL, .rawRequest = rawRequest};
+  char buf[4096];
+  char *method, *path;
+  int pret, minor_version;
+  struct phr_header headers[100];
+  size_t buflen = 0, prevbuflen = 0, method_len, path_len, num_headers;
+  ssize_t rret;
+
+  while (1)
+  {
+    /* read the request */
+    while ((rret = read(client.socket, buf + buflen, sizeof(buf) - buflen)) == -1)
+      ;
+    if (rret <= 0)
+      return req;
+    prevbuflen = buflen;
+    buflen += rret;
+    /* parse the request */
+    num_headers = sizeof(headers) / sizeof(headers[0]);
+    pret = phr_parse_request(buf, buflen, (const char **)&method, &method_len, (const char **)&path, &path_len,
+                             &minor_version, headers, &num_headers, prevbuflen);
+    if (pret > 0)
+      break; /* successfully parsed the request */
+    else if (pret == -1)
+      return req;
+    /* request is incomplete, continue the loop */
+    // assert(pret == -2);
+    if (buflen == sizeof(buf))
+      return req;
+  }
+  req.method = malloc(method_len + 1);
+  memcpy(req.method, method, method_len);
+  req.method[method_len] = '\0';
+  req.path = malloc(path_len + 1);
+  memcpy(req.path, path, path_len);
+  req.path[path_len] = '\0';
+  req.headers = headers;
+  req.numHeaders = num_headers;
+  return req;
+}
+
+route_handler_t matchRouteHandler(request_t req)
+{
+  for (int i = 0; i < routeHandlerCount; i++)
+  {
+    if (strcmp(routeHandlers[i].method, req.method) == 0 && strcmp(routeHandlers[i].path, req.path) == 0)
+    {
+      return routeHandlers[i];
+    }
+  }
+  return (route_handler_t){.method = NULL, .path = NULL, .handler = NULL};
+}
+
 void initClientAcceptEventHandler()
 {
   dispatch_source_t acceptSource = dispatch_source_create(DISPATCH_SOURCE_TYPE_READ, servSock, 0, serverQueue);
@@ -140,33 +201,38 @@ void initClientAcceptEventHandler()
 
       dispatch_source_t readSource = dispatch_source_create(DISPATCH_SOURCE_TYPE_READ, client.socket, 0, serverQueue);
       dispatch_source_set_event_handler(readSource, ^{
-        char request[1024];
-        ssize_t numBytes = read(client.socket, request, sizeof(request));
-        if (numBytes < 0)
+        char buf[4096];
+        request_t req = parseRequest(buf, client);
+
+        if (req.method == NULL)
         {
-          // perror("read() failed");
-          return;
-        }
-        else if (numBytes == 0)
-        {
+          shutdown(client.socket, SHUT_RDWR);
+          close(client.socket);
           return;
         }
 
-        printf("Request\n===\n%s\n", request);
+        route_handler_t routeHandler = matchRouteHandler(req);
 
-        route_handler_t rh = routeHandlers[routeHandlerCount - 1];
-        request_t req;
+        if (routeHandler.handler == NULL)
+        {
+          char *response = "HTTP/1.1 404 Not Found\r\n\r\n";
+          printf("Response\n===\n%s", response);
+          write(client.socket, response, strlen(response));
+          shutdown(client.socket, SHUT_RDWR);
+          close(client.socket);
+          return;
+        }
+
         response_t res;
         res.send = ^(char *data) {
           char *response = malloc(strlen("HTTP/1.1 200 OK\r\n\r\n") + strlen(data) + 1);
           sprintf(response, "HTTP/1.1 200 OK\r\n\r\n%s", data);
-
-          printf("Response\n===\n%s", response);
+          printf("Response\n===\n%s\n", response);
           write(client.socket, response, strlen(response));
         };
-        req.path = rh.path;
-        rh.handler(req, res);
-
+        routeHandler.handler(req, res);
+        free(req.path);
+        free(req.method);
         shutdown(client.socket, SHUT_RDWR);
         close(client.socket);
       });
@@ -191,16 +257,7 @@ app_t express()
   };
 
   void (^_get)(char *, void (^)(request_t, response_t)) = ^(char *path, requestHandler handler) {
-    // request_t req;
-    // response_t res;
-    // res.send = ^(char *data) {
-    //   printf("send - %s\n", data);
-    // };
-    // req.path = path;
-    // dispatch_block_t block = Block_copy(^{
-    //   handler(req, res);
-    // });
-    addRouteHandler(path, handler);
+    addRouteHandler("GET", path, handler);
   };
 
   app_t app = {.get = _get, .listen = _listen};
@@ -214,6 +271,10 @@ int main()
 
   app.get("/", ^(request_t req, response_t res) {
     res.send("Hello World!");
+  });
+
+  app.get("/test", ^(request_t req, response_t res) {
+    res.send("Testing, testing!");
   });
 
   app.listen(port, ^{
