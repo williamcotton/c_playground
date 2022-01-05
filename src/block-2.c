@@ -2,7 +2,17 @@
 #include <dispatch/dispatch.h>
 #include <Block.h>
 
-typedef void (^requestHandler)(char *path);
+typedef struct
+{
+  char *path;
+} request_t;
+
+typedef struct
+{
+  void (^send)(char *);
+} response_t;
+
+typedef void (^requestHandler)(request_t req, response_t res);
 
 typedef struct
 {
@@ -19,9 +29,15 @@ app_t express()
     b();
   };
 
-  void (^_get)(char *, void (^)(char *)) = ^(char *path, requestHandler handler) {
+  void (^_get)(char *, void (^)(request_t, response_t)) = ^(char *path, requestHandler handler) {
+    request_t req;
+    response_t res;
+    res.send = ^(char *data) {
+      printf("%s\n", data);
+    };
+    req.path = path;
     b = Block_copy(^{
-      handler(path);
+      handler(req, res);
     });
   };
 
@@ -59,8 +75,8 @@ int main()
   app_t app = express();
   int port = 3000;
 
-  app.get("/", ^(char *path) {
-    printf("path test 12: %s\n", path);
+  app.get("/", ^(request_t req, response_t res) {
+    res.send("Hello World!");
   });
 
   app.listen(port, ^{
