@@ -12,6 +12,8 @@ typedef struct
 {
   char *path;
   char *method;
+  char *url;
+  char *queryString;
   struct phr_header *headers;
   int numHeaders;
   char *rawRequest;
@@ -133,12 +135,12 @@ static void initServerListen(int port)
 
 static request_t parseRequest(char *rawRequest, client_t client)
 {
-  request_t req = {.path = NULL, .method = NULL, .headers = NULL, .rawRequest = rawRequest};
+  request_t req = {.url = NULL, .queryString = NULL, .path = NULL, .method = NULL, .headers = NULL, .rawRequest = rawRequest};
   char buf[4096];
-  char *method, *path;
+  char *method, *url, *path, *queryString;
   int pret, minor_version;
   struct phr_header headers[100];
-  size_t buflen = 0, prevbuflen = 0, method_len, path_len, num_headers;
+  size_t buflen = 0, prevbuflen = 0, method_len, path_len, queryString_len, url_len, num_headers;
   ssize_t rret;
 
   while (1)
@@ -152,7 +154,7 @@ static request_t parseRequest(char *rawRequest, client_t client)
     buflen += rret;
     /* parse the request */
     num_headers = sizeof(headers) / sizeof(headers[0]);
-    pret = phr_parse_request(buf, buflen, (const char **)&method, &method_len, (const char **)&path, &path_len,
+    pret = phr_parse_request(buf, buflen, (const char **)&method, &method_len, (const char **)&url, &url_len,
                              &minor_version, headers, &num_headers, prevbuflen);
     if (pret > 0)
       break; /* successfully parsed the request */
@@ -163,12 +165,17 @@ static request_t parseRequest(char *rawRequest, client_t client)
     if (buflen == sizeof(buf))
       return req;
   }
+
+  req.url = malloc(url_len + 1);
+  memcpy(req.url, url, url_len);
+  req.url[url_len] = '\0';
+  // char *copy = strdup(req.url);
+  // req.path = strtok(copy, "?");
+  // req.queryString = strtok(NULL, "?");
+  req.path = req.url;
   req.method = malloc(method_len + 1);
   memcpy(req.method, method, method_len);
   req.method[method_len] = '\0';
-  req.path = malloc(path_len + 1);
-  memcpy(req.path, path, path_len);
-  req.path[path_len] = '\0';
   req.headers = headers;
   req.numHeaders = num_headers;
   return req;
@@ -300,8 +307,12 @@ int main()
   });
 
   app.get("/test", ^(request_t *req, response_t *res) {
-    res->status = 201;
-    res->send("Testing, testing!");
+    // char *response = malloc(strlen("<h1>Testing!</h1><p>Query string: </p>") + strlen(req->queryString) + 1);
+    // sprintf(response, "<h1>Testing!</h1><p>Query string: %s</p>", req->queryString);
+
+    // res->status = 201;
+    // res->send(response);
+    res->send("testing!");
   });
 
   app.listen(port, ^{
