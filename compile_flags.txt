@@ -5,8 +5,11 @@
 -Wall
 -Wextra
 -Ideps
+-I "$(pg_config --includedir)"
+-L "$(pg_config --libdir)"
 -lm
 -fsanitize=address
 -fno-omit-frame-pointer
 -fno-optimize-sibling-calls
+-ftime-trace
 -fblocks

@@ -270,9 +270,9 @@ static void initServerListen(int port)
   }
 };
 
-static request_t parseRequest(char *rawRequest, client_t client)
+static request_t parseRequest(client_t client)
 {
-  request_t req = {.url = NULL, .queryString = "", .path = NULL, .method = NULL, .headers = NULL, .rawRequest = rawRequest};
+  request_t req = {.url = NULL, .queryString = "", .path = NULL, .method = NULL, .headers = NULL, .rawRequest = NULL};
   char buf[4096];
   char *method, *url;
   int pret, minor_version;
@@ -302,6 +302,8 @@ static request_t parseRequest(char *rawRequest, client_t client)
     if (buflen == sizeof(buf))
       return req;
   }
+
+  req.rawRequest = buf;
 
   // copy to request struct
 
@@ -349,12 +351,6 @@ static route_handler_t matchRouteHandler(request_t req)
   return (route_handler_t){.method = NULL, .path = NULL, .handler = NULL};
 }
 
-static void closeClientConnection(client_t client)
-{
-  shutdown(client.socket, SHUT_RDWR);
-  close(client.socket);
-}
-
 static void freeRequest(request_t req)
 {
   free(req.method);
@@ -362,6 +358,13 @@ static void freeRequest(request_t req)
   free(req.url);
   if (strlen(req.queryString) > 0)
     free(req.queryString);
+}
+
+static void closeClientConnection(client_t client, request_t req)
+{
+  shutdown(client.socket, SHUT_RDWR);
+  close(client.socket);
+  freeRequest(req);
 }
 
 static void buildResponse(response_t *res)
@@ -402,12 +405,11 @@ static void initClientAcceptEventHandler()
 
       dispatch_source_t readSource = dispatch_source_create(DISPATCH_SOURCE_TYPE_READ, client.socket, 0, serverQueue);
       dispatch_source_set_event_handler(readSource, ^{
-        char buf[4096];
-        request_t req = parseRequest(buf, client);
+        request_t req = parseRequest(client);
 
         if (req.method == NULL)
         {
-          closeClientConnection(client);
+          closeClientConnection(client, req);
           return;
         }
 
@@ -417,8 +419,7 @@ static void initClientAcceptEventHandler()
         {
           char *response = "HTTP/1.1 404 Not Found\r\n\r\n";
           write(client.socket, response, strlen(response));
-          freeRequest(req);
-          closeClientConnection(client);
+          closeClientConnection(client, req);
           return;
         }
 
@@ -432,8 +433,7 @@ static void initClientAcceptEventHandler()
 
         routeHandler.handler(&req, &res);
 
-        freeRequest(req);
-        closeClientConnection(client);
+        closeClientConnection(client, req);
       });
       dispatch_resume(readSource);
     }
