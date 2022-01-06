@@ -1,9 +1,12 @@
 -fdiagnostics-color=always
 -g
+-O1
 -lcurl
 -Wall
 -Wextra
 -Ideps
 -lm
 -fsanitize=address
+-fno-omit-frame-pointer
+-fno-optimize-sibling-calls
 -fblocks
