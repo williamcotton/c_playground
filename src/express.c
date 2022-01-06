@@ -8,6 +8,8 @@
 #include <Block.h>
 #include <picohttpparser/picohttpparser.h>
 
+#define UNUSED __attribute__((unused))
+
 typedef struct
 {
   char *path;
@@ -135,12 +137,12 @@ static void initServerListen(int port)
 
 static request_t parseRequest(char *rawRequest, client_t client)
 {
-  request_t req = {.url = NULL, .queryString = NULL, .path = NULL, .method = NULL, .headers = NULL, .rawRequest = rawRequest};
+  request_t req = {.url = NULL, .queryString = "", .path = NULL, .method = NULL, .headers = NULL, .rawRequest = rawRequest};
   char buf[4096];
-  char *method, *url, *path, *queryString;
+  char *method, *url;
   int pret, minor_version;
   struct phr_header headers[100];
-  size_t buflen = 0, prevbuflen = 0, method_len, path_len, queryString_len, url_len, num_headers;
+  size_t buflen = 0, prevbuflen = 0, method_len, queryString_len, url_len, num_headers;
   ssize_t rret;
 
   while (1)
@@ -169,10 +171,19 @@ static request_t parseRequest(char *rawRequest, client_t client)
   req.url = malloc(url_len + 1);
   memcpy(req.url, url, url_len);
   req.url[url_len] = '\0';
-  // char *copy = strdup(req.url);
-  // req.path = strtok(copy, "?");
-  // req.queryString = strtok(NULL, "?");
-  req.path = req.url;
+  char *copy = strdup(req.url);
+  char *queryStringStart = strchr(copy, '?');
+  if (queryStringStart)
+  {
+    queryString_len = strlen(queryStringStart + 1);
+    req.queryString = malloc(queryString_len + 1);
+    memcpy(req.queryString, queryStringStart + 1, queryString_len);
+    req.queryString[queryString_len] = '\0';
+    *queryStringStart = '\0';
+  }
+  req.path = malloc(strlen(copy) + 1);
+  memcpy(req.path, copy, strlen(copy));
+  req.path[strlen(copy)] = '\0';
   req.method = malloc(method_len + 1);
   memcpy(req.method, method, method_len);
   req.method[method_len] = '\0';
@@ -302,17 +313,20 @@ int main()
   app_t app = express();
   int port = 3000;
 
-  app.get("/", ^(request_t *req, response_t *res) {
+  app.get("/", ^(UNUSED request_t *req, response_t *res) {
     res->send("Hello World!");
   });
 
-  app.get("/test", ^(request_t *req, response_t *res) {
-    // char *response = malloc(strlen("<h1>Testing!</h1><p>Query string: </p>") + strlen(req->queryString) + 1);
-    // sprintf(response, "<h1>Testing!</h1><p>Query string: %s</p>", req->queryString);
+  app.get("/test", ^(UNUSED request_t *req, response_t *res) {
+    res->send("Testing, testing!");
+  });
 
-    // res->status = 201;
-    // res->send(response);
-    res->send("testing!");
+  app.get("/qs_test", ^(request_t *req, response_t *res) {
+    char *response = malloc(strlen("<h1>Testing!</h1><p>Query string: </p>") + strlen(req->queryString) + 1);
+    sprintf(response, "<h1>Testing!</h1><p>Query string: %s</p>", req->queryString);
+
+    res->status = 201;
+    res->send(response);
   });
 
   app.listen(port, ^{
