@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdarg.h>
 #include <unistd.h>
 #include <arpa/inet.h>
 #include <string.h>
@@ -160,6 +161,7 @@ typedef struct
 typedef struct
 {
   void (^send)(char *);
+  void (^sendf)(char *, ...);
   int status;
 } response_t;
 
@@ -393,19 +395,19 @@ static void buildResponse(response_t *res)
   res->status = 200;
 }
 
-static char *buildResponseString(char *data, response_t res)
+static char *buildResponseString(char *body, response_t res)
 {
   char *contentType = "text/html; charset=utf-8";
   char *contentLength = malloc(sizeof(char) * 20);
-  sprintf(contentLength, "%zu", strlen(data));
+  sprintf(contentLength, "%zu", strlen(body));
   char *statusMessage = getStatusMessage(res.status);
   char *status = malloc(sizeof(char) * (strlen(statusMessage) + 5));
   sprintf(status, "%d %s", res.status, statusMessage);
   char *headers = malloc(sizeof(char) * (strlen("HTTP/1.1 \r\nContent-Type: \r\nContent-Length: \r\n\r\n") + strlen(status) + strlen(contentType) + strlen(contentLength) + 1));
   sprintf(headers, "HTTP/1.1 %s\r\nContent-Type: %s\r\nContent-Length: %s\r\n\r\n", status, contentType, contentLength);
-  char *responseString = malloc(sizeof(char) * (strlen(headers) + strlen(data) + 1));
+  char *responseString = malloc(sizeof(char) * (strlen(headers) + strlen(body) + 1));
   strcpy(responseString, headers);
-  strcat(responseString, data);
+  strcat(responseString, body);
   free(status);
   free(headers);
   free(contentLength);
@@ -446,10 +448,19 @@ static void initClientAcceptEventHandler()
 
         __block response_t res;
         buildResponse(&res);
-        res.send = ^(char *data) {
-          char *response = buildResponseString(data, res);
+        res.send = ^(char *body) {
+          char *response = buildResponseString(body, res);
           write(client.socket, response, strlen(response));
           free(response);
+        };
+
+        res.sendf = ^(char *format, ...) {
+          char body[4096];
+          va_list args;
+          va_start(args, format);
+          vsnprintf(body, 255, format, args);
+          res.send(body);
+          va_end(args);
         };
 
         routeHandler.handler(&req, &res);
@@ -498,21 +509,11 @@ int main()
   });
 
   app.get("/qs_test", ^(request_t *req, response_t *res) {
-    char *response = malloc(strlen("<h1>Testing!</h1><p>Query string: </p>") + strlen(req->queryString) + 1);
-    sprintf(response, "<h1>Testing!</h1><p>Query string: %s</p>", req->queryString);
-
-    res->status = 201;
-    res->send(response);
-
-    free(response);
+    res->sendf("<h1>Testing!</h1><p>Query string: %s</p>", req->queryString);
   });
 
   app.get("/headers", ^(request_t *req, response_t *res) {
-    char *response = malloc(strlen("<h1>Testing!</h1><p>User-Agent: </p><p>Host: </p>") + strlen(req->get("User-Agent")) + strlen(req->get("Host")) + 1);
-    sprintf(response, "<h1>Testing!</h1><p>User-Agent: %s</p><p>Host: %s</p>", req->get("User-Agent"), req->get("Host"));
-
-    res->send(response);
-    free(response);
+    res->sendf("<h1>Testing!</h1><p>User-Agent: %s</p><p>Host: %s</p>", req->get("User-Agent"), req->get("Host"));
   });
 
   app.listen(port, ^{
