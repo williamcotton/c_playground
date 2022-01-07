@@ -162,15 +162,18 @@ typedef struct
 {
   void (^send)(char *);
   void (^sendf)(char *, ...);
+  void (^sendFile)(FILE *);
   int status;
 } response_t;
 
 typedef void (^requestHandler)(request_t *req, response_t *res);
+typedef void (^middlewareHandler)(request_t *req, response_t *res, void (^next)(void));
 
 typedef struct
 {
   void (^get)(char *path, requestHandler);
   void (^listen)(int port, void (^handler)());
+  void (^use)(middlewareHandler);
 } app_t;
 
 typedef struct
@@ -182,14 +185,85 @@ typedef struct
 
 typedef struct
 {
+  char *path;
+  middlewareHandler handler;
+} middleware_t;
+
+typedef struct
+{
   int socket;
   char *ip;
 } client_t;
 
 static route_handler_t *routeHandlers = NULL;
 static int routeHandlerCount = 0;
+static middleware_t *middlewares = NULL;
+static int middlewareCount = 0;
 static int servSock = -1;
 static dispatch_queue_t serverQueue = NULL;
+
+FILE *matchStatic(request_t *req, char *path)
+{
+  regex_t regex;
+  int reti;
+  size_t nmatch = 2;
+  regmatch_t pmatch[2];
+  char *pattern = NULL;
+  sprintf(pattern, "%s/(.*)", path);
+  char *buffer = NULL;
+  strcpy(buffer, req->path);
+  reti = regcomp(&regex, pattern, REG_EXTENDED);
+  if (reti)
+  {
+    fprintf(stderr, "Could not compile regex\n");
+    exit(6);
+  }
+  reti = regexec(&regex, buffer, nmatch, pmatch, 0);
+  if (reti == 0)
+  {
+    // printf("Matched\n");
+    // printf("%lld %lld\n", pmatch[1].rm_so, pmatch[1].rm_eo);
+    char *fileName = buffer + pmatch[1].rm_so;
+    fileName[pmatch[1].rm_eo - pmatch[1].rm_so] = 0;
+    printf("path: %s\n", fileName);
+    // char *file = malloc(strlen(path) + 1);
+    // strcpy(file, path);
+    // // printf("file: %s\n", file);
+    // char *file_path = malloc(strlen(file) + strlen("./files/") + 1);
+    // strcpy(file_path, "./files/");
+    // strcat(file_path, file);
+    // // printf("file_path: %s\n", file_path);
+    // FILE *fp = fopen(file_path, "r");
+    // free(file_path);
+    // free(file);
+    // return fp;
+    return NULL;
+  }
+  else
+  {
+    return NULL;
+  }
+}
+
+void writeStaticFile(FILE *fp, int fd)
+{
+  char buffer[1024];
+  while (1)
+  {
+    memset(buffer, 0, sizeof(buffer));
+    size_t size = fread(buffer, 1, sizeof(buffer), fp);
+    if (size < 0)
+    {
+      perror("read error");
+      exit(5);
+    }
+    if (size == 0)
+    {
+      break;
+    }
+    write(fd, buffer, size);
+  }
+}
 
 static void initRouteHandlers()
 {
@@ -200,6 +274,17 @@ static void addRouteHandler(char *method, char *path, requestHandler handler)
 {
   routeHandlers = realloc(routeHandlers, sizeof(route_handler_t) * (routeHandlerCount + 1));
   routeHandlers[routeHandlerCount++] = (route_handler_t){.method = method, .path = path, .handler = handler};
+}
+
+static void initMiddlewareHandlers()
+{
+  middlewares = malloc(sizeof(middleware_t));
+}
+
+static void addMiddlewareHandler(middlewareHandler handler)
+{
+  middlewares = realloc(middlewares, sizeof(middleware_t) * (middlewareCount + 1));
+  middlewares[middlewareCount++] = (middleware_t){.handler = handler};
 }
 
 static void initServerQueue()
@@ -436,6 +521,22 @@ static void initClientAcceptEventHandler()
           return;
         }
 
+        __block response_t res;
+        buildResponse(&res);
+        res.send = ^(char *body) {
+          char *response = buildResponseString(body, res);
+          write(client.socket, response, strlen(response));
+          free(response);
+        };
+        res.sendf = ^(char *format, ...) {
+          char body[4096];
+          va_list args;
+          va_start(args, format);
+          vsnprintf(body, 4096, format, args);
+          res.send(body);
+          va_end(args);
+        };
+
         route_handler_t routeHandler = matchRouteHandler(req);
 
         if (routeHandler.handler == NULL)
@@ -445,23 +546,6 @@ static void initClientAcceptEventHandler()
           closeClientConnection(client, req);
           return;
         }
-
-        __block response_t res;
-        buildResponse(&res);
-        res.send = ^(char *body) {
-          char *response = buildResponseString(body, res);
-          write(client.socket, response, strlen(response));
-          free(response);
-        };
-
-        res.sendf = ^(char *format, ...) {
-          char body[4096];
-          va_list args;
-          va_start(args, format);
-          vsnprintf(body, 255, format, args);
-          res.send(body);
-          va_end(args);
-        };
 
         routeHandler.handler(&req, &res);
 
@@ -476,29 +560,53 @@ static void initClientAcceptEventHandler()
 
 app_t express()
 {
+  initMiddlewareHandlers();
   initRouteHandlers();
   initServerQueue();
   initServerSocket();
 
-  void (^_listen)(int, void (^)()) = ^(int port, void (^handler)()) {
+  app_t app;
+
+  app.listen = ^(int port, void (^handler)()) {
     initServerListen(port);
     initClientAcceptEventHandler();
     handler();
     dispatch_main();
   };
 
-  void (^_get)(char *, void (^)(request_t *, response_t *)) = ^(char *path, requestHandler handler) {
+  app.get = ^(char *path, requestHandler handler) {
     addRouteHandler("GET", path, handler);
   };
 
-  app_t app = {.get = _get, .listen = _listen};
+  app.use = ^(middlewareHandler handler) {
+    addMiddlewareHandler(handler);
+  };
+
   return app;
 };
+
+middlewareHandler expressStatic(char *path)
+{
+  return Block_copy(^(request_t *req, response_t *res, void (^next)(void)) {
+    FILE *fp = matchStatic(req, path);
+    if (fp != NULL)
+    {
+      res->sendFile(fp);
+      fclose(fp);
+    }
+    else
+    {
+      next();
+    }
+  });
+}
 
 int main()
 {
   app_t app = express();
   int port = 3000;
+
+  app.use(expressStatic("/files"));
 
   app.get("/", ^(UNUSED request_t *req, response_t *res) {
     res->send("Hello World!");
