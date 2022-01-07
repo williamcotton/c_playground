@@ -31,7 +31,14 @@
     "unistd.h": "c",
     "__functional_base": "c",
     "memory": "c",
-    "picohttpparser.h": "c"
+    "picohttpparser.h": "c",
+    "atomic": "c",
+    "cstddef": "c",
+    "__memory": "c",
+    "functional": "c",
+    "optional": "c",
+    "ratio": "c",
+    "system_error": "c"
   },
   "C_Cpp.errorSquiggles": "Disabled"
 }

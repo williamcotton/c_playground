@@ -154,6 +154,7 @@ typedef struct
   struct phr_header *headers;
   int numHeaders;
   char *rawRequest;
+  char * (^get)(char *headerKey);
 } request_t;
 
 typedef struct
@@ -334,6 +335,26 @@ static request_t parseRequest(client_t client)
   req.headers = headers;
   req.numHeaders = num_headers;
 
+  req.get = ^(char *headerKey) {
+    for (int i = 0; i < req.numHeaders; i++)
+    {
+      char *key = malloc(req.headers[i].name_len + 1);
+      char *value = malloc(req.headers[i].value_len + 1);
+      memcpy(key, req.headers[i].name, req.headers[i].name_len);
+      key[req.headers[i].name_len] = '\0';
+      if (strcasecmp(key, headerKey) == 0)
+      {
+
+        memcpy(value, req.headers[i].value, req.headers[i].value_len);
+        value[req.headers[i].value_len] = '\0';
+        return value;
+      }
+      free(key);
+      free(value);
+    }
+    return (char *)NULL;
+  };
+
   free(copy);
 
   return req;
@@ -483,6 +504,14 @@ int main()
     res->status = 201;
     res->send(response);
 
+    free(response);
+  });
+
+  app.get("/headers", ^(request_t *req, response_t *res) {
+    char *response = malloc(strlen("<h1>Testing!</h1><p>User-Agent: </p><p>Host: </p>") + strlen(req->get("User-Agent")) + strlen(req->get("Host")) + 1);
+    sprintf(response, "<h1>Testing!</h1><p>User-Agent: %s</p><p>Host: %s</p>", req->get("User-Agent"), req->get("Host"));
+
+    res->send(response);
     free(response);
   });
 

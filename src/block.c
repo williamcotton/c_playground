@@ -19,6 +19,12 @@ int main()
     return a + b + d;
   };
 
+  char * (^str)(int) = ^(int a) {
+    return "Hello, block 123!";
+  };
+
+  printf("%s", str(42));
+
   printf("%d\n", add(1, 2));
 
   hello();
