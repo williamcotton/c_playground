@@ -11,6 +11,17 @@
 
 #define UNUSED __attribute__((unused))
 
+static char *errorHTML = "<!DOCTYPE html>\n"
+                         "<html lang=\"en\">\n"
+                         "<head>\n"
+                         "<meta charset=\"utf-8\">\n"
+                         "<title>Error</title>\n"
+                         "</head>\n"
+                         "<body>\n"
+                         "<pre>Cannot GET %s</pre>\n"
+                         "</body>\n"
+                         "</html>\n";
+
 static char *getStatusMessage(int status)
 {
   switch (status)
@@ -287,6 +298,19 @@ static void addMiddlewareHandler(middlewareHandler handler)
   middlewares[middlewareCount++] = (middleware_t){.handler = handler};
 }
 
+static void runMiddleware(request_t *req, response_t *res)
+{
+  // for (int i = 0; i < middlewareCount; i++)
+  // {
+  //   middlewares[i].handler(req, res, ^{
+  //     if (i == middlewareCount - 1)
+  //     {
+  //       res->send(NULL);
+  //     }
+  //   });
+  // }
+}
+
 static void initServerQueue()
 {
   serverQueue = dispatch_queue_create("serverQueue", DISPATCH_QUEUE_CONCURRENT);
@@ -536,18 +560,36 @@ static void initClientAcceptEventHandler()
           res.send(body);
           va_end(args);
         };
+        res.sendFile = ^(FILE *file) {
+          if (file == NULL)
+          {
+            res.status = 404;
+            res.send("File not found");
+            return;
+          }
+          fseek(file, 0, SEEK_END);
+          long fileSize = ftell(file);
+          rewind(file);
+          char *fileContent = malloc(sizeof(char) * fileSize);
+          fread(fileContent, 1, fileSize, file);
+          fclose(file);
+          res.send(fileContent);
+          free(fileContent);
+        };
+
+        runMiddleware(&req, &res);
 
         route_handler_t routeHandler = matchRouteHandler(req);
 
         if (routeHandler.handler == NULL)
         {
-          char *response = "HTTP/1.1 404 Not Found\r\n\r\n";
-          write(client.socket, response, strlen(response));
-          closeClientConnection(client, req);
-          return;
+          res.status = 404;
+          res.sendf(errorHTML, req.path);
         }
-
-        routeHandler.handler(&req, &res);
+        else
+        {
+          routeHandler.handler(&req, &res);
+        }
 
         closeClientConnection(client, req);
       });
@@ -616,7 +658,7 @@ int main()
     res->send("Testing, testing!");
   });
 
-  app.get("/qs_test", ^(request_t *req, response_t *res) {
+  app.get("/qs", ^(request_t *req, response_t *res) {
     res->sendf("<h1>Testing!</h1><p>Query string: %s</p>", req->queryString);
   });
 
