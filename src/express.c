@@ -8,6 +8,7 @@
 #include <regex.h>
 #include <Block.h>
 #include <picohttpparser/picohttpparser.h>
+#include <sys/stat.h>
 
 #define UNUSED __attribute__((unused))
 
@@ -173,7 +174,7 @@ typedef struct
 {
   void (^send)(char *);
   void (^sendf)(char *, ...);
-  void (^sendFile)(FILE *);
+  void (^sendFile)(char *);
   int status;
 } response_t;
 
@@ -272,6 +273,9 @@ void writeStaticFile(FILE *fp, int fd)
     {
       break;
     }
+    //     Content-Type: text/plain; charset=UTF-8
+    // < Content-Length: 14
+    // Content-Length: 14
     write(fd, buffer, size);
   }
 }
@@ -523,6 +527,13 @@ static char *buildResponseString(char *body, response_t res)
   return responseString;
 }
 
+size_t fileSize(char *filePath)
+{
+  struct stat st;
+  stat(filePath, &st);
+  return st.st_size;
+}
+
 static void initClientAcceptEventHandler()
 {
   dispatch_source_t acceptSource = dispatch_source_create(DISPATCH_SOURCE_TYPE_READ, servSock, 0, serverQueue);
@@ -560,21 +571,27 @@ static void initClientAcceptEventHandler()
           res.send(body);
           va_end(args);
         };
-        res.sendFile = ^(FILE *file) {
+        res.sendFile = ^(char *path) {
+          FILE *file = fopen(path, "r");
           if (file == NULL)
           {
+            printf("File not found\n");
             res.status = 404;
             res.send("File not found");
             return;
           }
-          fseek(file, 0, SEEK_END);
-          long fileSize = ftell(file);
-          rewind(file);
-          char *fileContent = malloc(sizeof(char) * fileSize);
-          fread(fileContent, 1, fileSize, file);
-          fclose(file);
-          res.send(fileContent);
-          free(fileContent);
+          printf("File size: %zu\n", fileSize(path));
+          char *response = "HTTP/1.1 200 OK\r\n\r\n";
+          write(client.socket, response, strlen(response));
+          char *buffer = malloc(4096);
+          size_t bytesRead = fread(buffer, 1, 4096, file);
+          while (bytesRead > 0)
+          {
+            write(client.socket, buffer, bytesRead);
+            bytesRead = fread(buffer, 1, 4096, file);
+          }
+          free(buffer);
+          // writeStaticFile(file, client.socket);
         };
 
         runMiddleware(&req, &res);
@@ -648,7 +665,7 @@ int main()
   app_t app = express();
   int port = 3000;
 
-  app.use(expressStatic("/files"));
+  app.use(expressStatic("files"));
 
   app.get("/", ^(UNUSED request_t *req, response_t *res) {
     res->send("Hello World!");
@@ -664,6 +681,11 @@ int main()
 
   app.get("/headers", ^(request_t *req, response_t *res) {
     res->sendf("<h1>Testing!</h1><p>User-Agent: %s</p><p>Host: %s</p>", req->get("User-Agent"), req->get("Host"));
+  });
+
+  app.get("/file", ^(UNUSED request_t *req, response_t *res) {
+    // res->send("Testing, testing!");
+    res->sendFile("./files/test.txt");
   });
 
   app.listen(port, ^{
