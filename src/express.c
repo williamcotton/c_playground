@@ -9,6 +9,7 @@
 #include <Block.h>
 #include <picohttpparser/picohttpparser.h>
 #include <sys/stat.h>
+#include <hash/hash.h>
 
 #define UNUSED __attribute__((unused))
 
@@ -158,12 +159,22 @@ static char *getStatusMessage(int status)
   }
 }
 
+typedef char * (^getHashBlock)(char *key);
+static getHashBlock reqQueryFactory(hash_t *queryHash)
+{
+  return Block_copy(^(char *key) {
+    return (char *)hash_get(queryHash, key);
+  });
+}
+
 typedef struct
 {
   char *path;
   char *method;
   char *url;
   char *queryString;
+  hash_t *queryHash;
+  char * (^query)(char *queryKey);
   struct phr_header *headers;
   int numHeaders;
   char *rawRequest;
@@ -179,7 +190,7 @@ typedef struct
 } response_t;
 
 typedef void (^requestHandler)(request_t *req, response_t *res);
-typedef void (^middlewareHandler)(request_t *req, response_t *res, void (^next)(void));
+typedef void (^middlewareHandler)(request_t *req, response_t *res, void (^next)());
 
 typedef struct
 {
@@ -290,7 +301,7 @@ static void addMiddlewareHandler(middlewareHandler handler)
   middlewares[middlewareCount++] = (middleware_t){.handler = handler};
 }
 
-static void runMiddleware(int index, request_t *req, response_t *res, void (^next)(void))
+static void runMiddleware(int index, request_t *req, response_t *res, void (^next)())
 {
   if (index < middlewareCount)
   {
@@ -375,24 +386,25 @@ static void initServerListen(int port)
   }
 };
 
-static void printQueryString(char *queryString)
+static void parseQueryString(request_t *req)
 {
   char *key = NULL;
   char *value = NULL;
   char *buffer = NULL;
   char *token = NULL;
   char *saveptr = NULL;
-  buffer = malloc(strlen(queryString) + 1);
-  strcpy(buffer, queryString);
+  buffer = malloc(strlen(req->queryString) + 1);
+  strcpy(buffer, req->queryString);
   token = strtok_r(buffer, "&", &saveptr);
   while (token != NULL)
   {
     key = strtok_r(token, "=", &saveptr);
     value = strtok_r(NULL, "=", &saveptr);
-    printf("key: %s, value: %s\n", key, value);
+    hash_set(req->queryHash, key, value);
     token = strtok_r(NULL, "&", &saveptr);
   }
-  free(buffer);
+  // printf("buffer: %s\n", buffer);
+  // free(buffer);
 }
 
 static request_t parseRequest(client_t client)
@@ -450,6 +462,8 @@ static request_t parseRequest(client_t client)
     memcpy(req.queryString, queryStringStart + 1, queryString_len);
     req.queryString[queryString_len] = '\0';
     *queryStringStart = '\0';
+    req.queryHash = hash_new();
+    parseQueryString(&req);
     // printQueryString(req.queryString);
   }
 
@@ -479,6 +493,8 @@ static request_t parseRequest(client_t client)
     }
     return (char *)NULL;
   };
+
+  req.query = reqQueryFactory(req.queryHash);
 
   free(copy);
 
@@ -589,10 +605,11 @@ static void initClientAcceptEventHandler()
           if (file == NULL)
           {
             res.status = 404;
-            res.send("File not found");
+            res.sendf(errorHTML, req.path);
             return;
           }
           char *response = malloc(sizeof(char) * (strlen("HTTP/1.1 200 OK\r\nContent-Length: \r\n\r\n") + 20));
+          // TODO: mimetype
           sprintf(response, "HTTP/1.1 200 OK\r\nContent-Length: %zu\r\n\r\n", fileSize(path));
           write(client.socket, response, strlen(response));
           char *buffer = malloc(4096);
@@ -658,8 +675,7 @@ app_t express()
 
 middlewareHandler expressStatic(char *path)
 {
-
-  return Block_copy(^(request_t *req, response_t *res, void (^next)(void)) {
+  return Block_copy(^(request_t *req, response_t *res, void (^next)()) {
     char *filePath = matchFilepath(req, path);
     if (filePath != NULL)
     {
@@ -680,7 +696,7 @@ int main()
 
   app.use(expressStatic("files"));
 
-  app.use(^(UNUSED request_t *req, UNUSED response_t *res, void (^next)(void)) {
+  app.use(^(UNUSED request_t *req, UNUSED response_t *res, void (^next)()) {
     next();
   });
 
@@ -693,7 +709,7 @@ int main()
   });
 
   app.get("/qs", ^(request_t *req, response_t *res) {
-    res->sendf("<h1>Testing!</h1><p>Query string: %s</p>", req->queryString);
+    res->sendf("<h1>Testing!</h1><p>Test value: %s</p><p>Query string: %s</p>", req->query("test"), req->queryString);
   });
 
   app.get("/headers", ^(request_t *req, response_t *res) {
