@@ -292,11 +292,9 @@ static void addMiddlewareHandler(middlewareHandler handler)
 
 static void runMiddleware(int index, request_t *req, response_t *res, void (^next)(void))
 {
-  printf("Running middleware %d/%d\n", index, middlewareCount);
   if (index < middlewareCount)
   {
     middlewares[index].handler(req, res, ^{
-      printf("Next\n");
       runMiddleware(index + 1, req, res, next);
     });
   }
@@ -590,7 +588,6 @@ static void initClientAcceptEventHandler()
           FILE *file = fopen(path, "r");
           if (file == NULL)
           {
-            printf("File not found\n");
             res.status = 404;
             res.send("File not found");
             return;
@@ -661,6 +658,7 @@ app_t express()
 
 middlewareHandler expressStatic(char *path)
 {
+
   return Block_copy(^(request_t *req, response_t *res, void (^next)(void)) {
     char *filePath = matchFilepath(req, path);
     if (filePath != NULL)
@@ -682,8 +680,7 @@ int main()
 
   app.use(expressStatic("files"));
 
-  app.use(^(request_t *req, response_t *res, void (^next)(void)) {
-    printf("running some middleware!");
+  app.use(^(UNUSED request_t *req, UNUSED response_t *res, void (^next)(void)) {
     next();
   });
 
