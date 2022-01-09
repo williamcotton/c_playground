@@ -205,30 +205,6 @@ static getHashBlock reqQueryFactory(hash_t *queryHash)
   });
 }
 
-typedef char * (^getHeaderBlock)(char *key);
-static getHeaderBlock reqGetHeaderFactory(request_t req)
-{
-  return Block_copy(^(char *headerKey) {
-    for (int i = 0; i < req.numHeaders; i++)
-    {
-      char *key = malloc(req.headers[i].name_len + 1);
-      char *value = malloc(req.headers[i].value_len + 1);
-      memcpy(key, req.headers[i].name, req.headers[i].name_len);
-      key[req.headers[i].name_len] = '\0';
-      if (strcasecmp(key, headerKey) == 0)
-      {
-
-        memcpy(value, req.headers[i].value, req.headers[i].value_len);
-        value[req.headers[i].value_len] = '\0';
-        return value;
-      }
-      free(key);
-      free(value);
-    }
-    return (char *)NULL;
-  });
-}
-
 static char *buildResponseString(char *body, response_t *res)
 {
   char *contentType = "text/html; charset=utf-8";
