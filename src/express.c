@@ -214,15 +214,15 @@ static int middlewareCount = 0;
 static int servSock = -1;
 static dispatch_queue_t serverQueue = NULL;
 
-FILE *matchStatic(request_t *req, char *path)
+char *matchFilepath(request_t *req, char *path)
 {
   regex_t regex;
   int reti;
   size_t nmatch = 2;
   regmatch_t pmatch[2];
-  char *pattern = NULL;
-  sprintf(pattern, "%s/(.*)", path);
-  char *buffer = NULL;
+  char *pattern = malloc(sizeof(char) * (strlen(path) + strlen("//(.*)") + 1));
+  sprintf(pattern, "/%s/(.*)", path);
+  char *buffer = malloc(sizeof(char) * (strlen(req->url) + 1));
   strcpy(buffer, req->path);
   reti = regcomp(&regex, pattern, REG_EXTENDED);
   if (reti)
@@ -233,23 +233,11 @@ FILE *matchStatic(request_t *req, char *path)
   reti = regexec(&regex, buffer, nmatch, pmatch, 0);
   if (reti == 0)
   {
-    // printf("Matched\n");
-    // printf("%lld %lld\n", pmatch[1].rm_so, pmatch[1].rm_eo);
     char *fileName = buffer + pmatch[1].rm_so;
     fileName[pmatch[1].rm_eo - pmatch[1].rm_so] = 0;
-    printf("path: %s\n", fileName);
-    // char *file = malloc(strlen(path) + 1);
-    // strcpy(file, path);
-    // // printf("file: %s\n", file);
-    // char *file_path = malloc(strlen(file) + strlen("./files/") + 1);
-    // strcpy(file_path, "./files/");
-    // strcat(file_path, file);
-    // // printf("file_path: %s\n", file_path);
-    // FILE *fp = fopen(file_path, "r");
-    // free(file_path);
-    // free(file);
-    // return fp;
-    return NULL;
+    char *file_path = malloc(sizeof(char) * (strlen(fileName) + strlen(".//") + strlen(path) + 1));
+    sprintf(file_path, "./%s/%s", path, fileName);
+    return file_path;
   }
   else
   {
@@ -302,17 +290,20 @@ static void addMiddlewareHandler(middlewareHandler handler)
   middlewares[middlewareCount++] = (middleware_t){.handler = handler};
 }
 
-static void runMiddleware(request_t *req, response_t *res)
+static void runMiddleware(int index, request_t *req, response_t *res, void (^next)(void))
 {
-  // for (int i = 0; i < middlewareCount; i++)
-  // {
-  //   middlewares[i].handler(req, res, ^{
-  //     if (i == middlewareCount - 1)
-  //     {
-  //       res->send(NULL);
-  //     }
-  //   });
-  // }
+  printf("Running middleware %d/%d\n", index, middlewareCount);
+  if (index < middlewareCount)
+  {
+    middlewares[index].handler(req, res, ^{
+      printf("Next\n");
+      runMiddleware(index + 1, req, res, next);
+    });
+  }
+  else
+  {
+    next();
+  }
 }
 
 static void initServerQueue()
@@ -386,6 +377,26 @@ static void initServerListen(int port)
   }
 };
 
+static void printQueryString(char *queryString)
+{
+  char *key = NULL;
+  char *value = NULL;
+  char *buffer = NULL;
+  char *token = NULL;
+  char *saveptr = NULL;
+  buffer = malloc(strlen(queryString) + 1);
+  strcpy(buffer, queryString);
+  token = strtok_r(buffer, "&", &saveptr);
+  while (token != NULL)
+  {
+    key = strtok_r(token, "=", &saveptr);
+    value = strtok_r(NULL, "=", &saveptr);
+    printf("key: %s, value: %s\n", key, value);
+    token = strtok_r(NULL, "&", &saveptr);
+  }
+  free(buffer);
+}
+
 static request_t parseRequest(client_t client)
 {
   request_t req = {.url = NULL, .queryString = "", .path = NULL, .method = NULL, .headers = NULL, .rawRequest = NULL};
@@ -441,6 +452,7 @@ static request_t parseRequest(client_t client)
     memcpy(req.queryString, queryStringStart + 1, queryString_len);
     req.queryString[queryString_len] = '\0';
     *queryStringStart = '\0';
+    // printQueryString(req.queryString);
   }
 
   req.path = malloc(strlen(copy) + 1);
@@ -558,11 +570,13 @@ static void initClientAcceptEventHandler()
 
         __block response_t res;
         buildResponse(&res);
+
         res.send = ^(char *body) {
           char *response = buildResponseString(body, res);
           write(client.socket, response, strlen(response));
           free(response);
         };
+
         res.sendf = ^(char *format, ...) {
           char body[4096];
           va_list args;
@@ -571,6 +585,7 @@ static void initClientAcceptEventHandler()
           res.send(body);
           va_end(args);
         };
+
         res.sendFile = ^(char *path) {
           FILE *file = fopen(path, "r");
           if (file == NULL)
@@ -580,8 +595,8 @@ static void initClientAcceptEventHandler()
             res.send("File not found");
             return;
           }
-          printf("File size: %zu\n", fileSize(path));
-          char *response = "HTTP/1.1 200 OK\r\n\r\n";
+          char *response = malloc(sizeof(char) * (strlen("HTTP/1.1 200 OK\r\nContent-Length: \r\n\r\n") + 20));
+          sprintf(response, "HTTP/1.1 200 OK\r\nContent-Length: %zu\r\n\r\n", fileSize(path));
           write(client.socket, response, strlen(response));
           char *buffer = malloc(4096);
           size_t bytesRead = fread(buffer, 1, 4096, file);
@@ -591,22 +606,22 @@ static void initClientAcceptEventHandler()
             bytesRead = fread(buffer, 1, 4096, file);
           }
           free(buffer);
-          // writeStaticFile(file, client.socket);
+          free(response);
+          fclose(file);
         };
 
-        runMiddleware(&req, &res);
-
-        route_handler_t routeHandler = matchRouteHandler(req);
-
-        if (routeHandler.handler == NULL)
-        {
-          res.status = 404;
-          res.sendf(errorHTML, req.path);
-        }
-        else
-        {
-          routeHandler.handler(&req, &res);
-        }
+        runMiddleware(0, &req, &res, ^{
+          route_handler_t routeHandler = matchRouteHandler(req);
+          if (routeHandler.handler == NULL)
+          {
+            res.status = 404;
+            res.sendf(errorHTML, req.path);
+          }
+          else
+          {
+            routeHandler.handler((request_t *)&req, &res);
+          }
+        });
 
         closeClientConnection(client, req);
       });
@@ -647,11 +662,11 @@ app_t express()
 middlewareHandler expressStatic(char *path)
 {
   return Block_copy(^(request_t *req, response_t *res, void (^next)(void)) {
-    FILE *fp = matchStatic(req, path);
-    if (fp != NULL)
+    char *filePath = matchFilepath(req, path);
+    if (filePath != NULL)
     {
-      res->sendFile(fp);
-      fclose(fp);
+      res->sendFile(filePath);
+      free(filePath);
     }
     else
     {
@@ -666,6 +681,11 @@ int main()
   int port = 3000;
 
   app.use(expressStatic("files"));
+
+  app.use(^(request_t *req, response_t *res, void (^next)(void)) {
+    printf("running some middleware!");
+    next();
+  });
 
   app.get("/", ^(UNUSED request_t *req, response_t *res) {
     res->send("Hello World!");
@@ -684,7 +704,6 @@ int main()
   });
 
   app.get("/file", ^(UNUSED request_t *req, response_t *res) {
-    // res->send("Testing, testing!");
     res->sendFile("./files/test.txt");
   });
 
