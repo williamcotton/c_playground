@@ -159,13 +159,18 @@ static char *getStatusMessage(int status)
   }
 }
 
-typedef char * (^getHashBlock)(char *key);
-static getHashBlock reqQueryFactory(hash_t *queryHash)
+size_t fileSize(char *filePath)
 {
-  return Block_copy(^(char *key) {
-    return (char *)hash_get(queryHash, key);
-  });
+  struct stat st;
+  stat(filePath, &st);
+  return st.st_size;
 }
+
+typedef struct
+{
+  int socket;
+  char *ip;
+} client_t;
 
 typedef struct
 {
@@ -192,6 +197,108 @@ typedef struct
 typedef void (^requestHandler)(request_t *req, response_t *res);
 typedef void (^middlewareHandler)(request_t *req, response_t *res, void (^next)());
 
+typedef char * (^getHashBlock)(char *key);
+static getHashBlock reqQueryFactory(hash_t *queryHash)
+{
+  return Block_copy(^(char *key) {
+    return (char *)hash_get(queryHash, key);
+  });
+}
+
+typedef char * (^getHeaderBlock)(char *key);
+static getHeaderBlock reqGetHeaderFactory(request_t req)
+{
+  return Block_copy(^(char *headerKey) {
+    for (int i = 0; i < req.numHeaders; i++)
+    {
+      char *key = malloc(req.headers[i].name_len + 1);
+      char *value = malloc(req.headers[i].value_len + 1);
+      memcpy(key, req.headers[i].name, req.headers[i].name_len);
+      key[req.headers[i].name_len] = '\0';
+      if (strcasecmp(key, headerKey) == 0)
+      {
+
+        memcpy(value, req.headers[i].value, req.headers[i].value_len);
+        value[req.headers[i].value_len] = '\0';
+        return value;
+      }
+      free(key);
+      free(value);
+    }
+    return (char *)NULL;
+  });
+}
+
+static char *buildResponseString(char *body, response_t *res)
+{
+  char *contentType = "text/html; charset=utf-8";
+  char *contentLength = malloc(sizeof(char) * 20);
+  sprintf(contentLength, "%zu", strlen(body));
+  char *statusMessage = getStatusMessage(res->status);
+  char *status = malloc(sizeof(char) * (strlen(statusMessage) + 5));
+  sprintf(status, "%d %s", res->status, statusMessage);
+  char *headers = malloc(sizeof(char) * (strlen("HTTP/1.1 \r\nContent-Type: \r\nContent-Length: \r\n\r\n") + strlen(status) + strlen(contentType) + strlen(contentLength) + 1));
+  sprintf(headers, "HTTP/1.1 %s\r\nContent-Type: %s\r\nContent-Length: %s\r\n\r\n", status, contentType, contentLength);
+  char *responseString = malloc(sizeof(char) * (strlen(headers) + strlen(body) + 1));
+  strcpy(responseString, headers);
+  strcat(responseString, body);
+  free(status);
+  free(headers);
+  free(contentLength);
+  return responseString;
+}
+
+typedef void (^sendBlock)(char *body);
+static sendBlock sendFactory(client_t client, response_t *res)
+{
+  return Block_copy(^(char *body) {
+    char *response = buildResponseString(body, res);
+    write(client.socket, response, strlen(response));
+    free(response);
+  });
+}
+
+typedef void (^sendfBlock)(char *format, ...);
+static sendfBlock sendfFactory(response_t *res)
+{
+  return Block_copy(^(char *format, ...) {
+    char body[4096];
+    va_list args;
+    va_start(args, format);
+    vsnprintf(body, 4096, format, args);
+    res->send(body);
+    va_end(args);
+  });
+}
+
+typedef void (^sendFileBlock)(char *body);
+static sendFileBlock sendFileFactory(client_t client, request_t *req, response_t *res)
+{
+  return Block_copy(^(char *path) {
+    FILE *file = fopen(path, "r");
+    if (file == NULL)
+    {
+      res->status = 404;
+      res->sendf(errorHTML, req->path);
+      return;
+    }
+    char *response = malloc(sizeof(char) * (strlen("HTTP/1.1 200 OK\r\nContent-Length: \r\n\r\n") + 20));
+    // TODO: mimetype
+    sprintf(response, "HTTP/1.1 200 OK\r\nContent-Length: %zu\r\n\r\n", fileSize(path));
+    write(client.socket, response, strlen(response));
+    char *buffer = malloc(4096);
+    size_t bytesRead = fread(buffer, 1, 4096, file);
+    while (bytesRead > 0)
+    {
+      write(client.socket, buffer, bytesRead);
+      bytesRead = fread(buffer, 1, 4096, file);
+    }
+    free(buffer);
+    free(response);
+    fclose(file);
+  });
+}
+
 typedef struct
 {
   void (^get)(char *path, requestHandler);
@@ -211,12 +318,6 @@ typedef struct
   char *path;
   middlewareHandler handler;
 } middleware_t;
-
-typedef struct
-{
-  int socket;
-  char *ip;
-} client_t;
 
 static route_handler_t *routeHandlers = NULL;
 static int routeHandlerCount = 0;
@@ -534,32 +635,6 @@ static void buildResponse(response_t *res)
   res->status = 200;
 }
 
-static char *buildResponseString(char *body, response_t res)
-{
-  char *contentType = "text/html; charset=utf-8";
-  char *contentLength = malloc(sizeof(char) * 20);
-  sprintf(contentLength, "%zu", strlen(body));
-  char *statusMessage = getStatusMessage(res.status);
-  char *status = malloc(sizeof(char) * (strlen(statusMessage) + 5));
-  sprintf(status, "%d %s", res.status, statusMessage);
-  char *headers = malloc(sizeof(char) * (strlen("HTTP/1.1 \r\nContent-Type: \r\nContent-Length: \r\n\r\n") + strlen(status) + strlen(contentType) + strlen(contentLength) + 1));
-  sprintf(headers, "HTTP/1.1 %s\r\nContent-Type: %s\r\nContent-Length: %s\r\n\r\n", status, contentType, contentLength);
-  char *responseString = malloc(sizeof(char) * (strlen(headers) + strlen(body) + 1));
-  strcpy(responseString, headers);
-  strcat(responseString, body);
-  free(status);
-  free(headers);
-  free(contentLength);
-  return responseString;
-}
-
-size_t fileSize(char *filePath)
-{
-  struct stat st;
-  stat(filePath, &st);
-  return st.st_size;
-}
-
 static void initClientAcceptEventHandler()
 {
   dispatch_source_t acceptSource = dispatch_source_create(DISPATCH_SOURCE_TYPE_READ, servSock, 0, serverQueue);
@@ -585,44 +660,9 @@ static void initClientAcceptEventHandler()
         __block response_t res;
         buildResponse(&res);
 
-        res.send = ^(char *body) {
-          char *response = buildResponseString(body, res);
-          write(client.socket, response, strlen(response));
-          free(response);
-        };
-
-        res.sendf = ^(char *format, ...) {
-          char body[4096];
-          va_list args;
-          va_start(args, format);
-          vsnprintf(body, 4096, format, args);
-          res.send(body);
-          va_end(args);
-        };
-
-        res.sendFile = ^(char *path) {
-          FILE *file = fopen(path, "r");
-          if (file == NULL)
-          {
-            res.status = 404;
-            res.sendf(errorHTML, req.path);
-            return;
-          }
-          char *response = malloc(sizeof(char) * (strlen("HTTP/1.1 200 OK\r\nContent-Length: \r\n\r\n") + 20));
-          // TODO: mimetype
-          sprintf(response, "HTTP/1.1 200 OK\r\nContent-Length: %zu\r\n\r\n", fileSize(path));
-          write(client.socket, response, strlen(response));
-          char *buffer = malloc(4096);
-          size_t bytesRead = fread(buffer, 1, 4096, file);
-          while (bytesRead > 0)
-          {
-            write(client.socket, buffer, bytesRead);
-            bytesRead = fread(buffer, 1, 4096, file);
-          }
-          free(buffer);
-          free(response);
-          fclose(file);
-        };
+        res.send = sendFactory(client, &res);
+        res.sendf = sendfFactory(&res);
+        res.sendFile = sendFileFactory(client, &req, &res);
 
         runMiddleware(0, &req, &res, ^{
           route_handler_t routeHandler = matchRouteHandler(req);
