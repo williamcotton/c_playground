@@ -185,6 +185,9 @@ typedef struct request_t
   char * (^get)(char *headerKey);
   hash_t *paramsHash;
   char * (^param)(char *paramKey);
+  char *bodyString;
+  hash_t *bodyHash;
+  char * (^body)(char *bodyKey);
   char *rawRequest;
 } request_t;
 
@@ -351,6 +354,13 @@ static getHashBlock reqParamFactory(hash_t *paramsHash)
   });
 }
 
+static getHashBlock reqBodyFactory(hash_t *bodyHash)
+{
+  return Block_copy(^(char *key) {
+    return (char *)hash_get(bodyHash, key);
+  });
+}
+
 static char *buildResponseString(char *body, response_t *res)
 {
   char *contentType = "text/html; charset=utf-8";
@@ -424,6 +434,7 @@ static sendFileBlock sendFileFactory(client_t client, request_t *req, response_t
 typedef struct app_t
 {
   void (^get)(char *path, requestHandler);
+  void (^post)(char *path, requestHandler);
   void (^listen)(int port, void (^handler)());
   void (^use)(middlewareHandler);
 } app_t;
@@ -596,22 +607,19 @@ static void initServerListen(int port)
   }
 };
 
-static void parseQueryString(request_t *req)
+static void parseQueryString(hash_t *hash, char *string)
 {
-  char *key = NULL;
-  char *value = NULL;
-  char *buffer = NULL;
-  char *token = NULL;
-  char *saveptr = NULL;
-  buffer = malloc(strlen(req->queryString) + 1);
-  strcpy(buffer, req->queryString);
-  token = strtok_r(buffer, "&", &saveptr);
-  while (token != NULL)
+  char *query = strdup(string);
+  char *tokens = query;
+  char *p = query;
+  while ((p = strsep(&tokens, "&\n")))
   {
-    key = strtok_r(token, "=", &saveptr);
-    value = strtok_r(NULL, "=", &saveptr);
-    hash_set(req->queryHash, key, value);
-    token = strtok_r(NULL, "&", &saveptr);
+    char *key = strtok(p, "=");
+    char *value = NULL;
+    if (key && (value = strtok(NULL, "=")))
+      hash_set(hash, key, value);
+    else
+      hash_set(hash, key, "");
   }
 }
 
@@ -681,7 +689,7 @@ static request_t parseRequest(client_t client)
     req.queryString[queryString_len] = '\0';
     *queryStringStart = '\0';
     req.queryHash = hash_new();
-    parseQueryString(&req);
+    parseQueryString(req.queryHash, req.queryString);
   }
 
   req.path = malloc(strlen(copy) + 1);
@@ -690,6 +698,34 @@ static request_t parseRequest(client_t client)
 
   req.get = reqGetHeaderFactory(req.headersHash);
   req.query = reqQueryFactory(req.queryHash);
+
+  if (strncmp(req.method, "POST", 4) == 0)
+  {
+    char *copy = strdup(req.rawRequest);
+    req.bodyString = strstr(copy, "\r\n\r\n");
+    req.bodyHash = hash_new();
+    if (req.bodyString && strlen(req.bodyString) > 4)
+    {
+      req.bodyString += 4;
+      if (strncmp(req.get("Content-Type"), "application/x-www-form-urlencoded", 33) == 0)
+      {
+        parseQueryString(req.bodyHash, req.bodyString);
+      }
+      else if (strncmp(req.get("Content-Type"), "application/json", 16) == 0)
+      {
+        printf("%s\n", req.bodyString);
+      }
+      else if (strncmp(req.get("Content-Type"), "multipart/form-data", 20) == 0)
+      {
+        printf("%s\n", req.bodyString);
+      }
+    }
+    else
+    {
+      req.bodyString = "";
+    }
+    req.body = reqBodyFactory(req.bodyHash);
+  }
 
   free(copy);
 
@@ -735,6 +771,7 @@ static void freeRequest(request_t req)
   hash_free(req.queryHash);
   hash_free(req.headersHash);
   hash_free(req.paramsHash);
+  hash_free(req.bodyHash);
   Block_release(req.get);
   Block_release(req.query);
   Block_release(req.param);
@@ -825,6 +862,10 @@ app_t express()
     addRouteHandler("GET", path, handler);
   };
 
+  app.post = ^(char *path, requestHandler handler) {
+    addRouteHandler("POST", path, handler);
+  };
+
   app.use = ^(middlewareHandler handler) {
     addMiddlewareHandler(handler);
   };
@@ -869,7 +910,7 @@ int main()
   });
 
   app.get("/qs", ^(request_t *req, response_t *res) {
-    res->sendf("<h1>Testing Query String!</h1><p>Test value: %s</p><p>Query string: %s</p>", req->query("test"), req->queryString);
+    res->sendf("<h1>Testing Query String!</h1><p>Test 1: %s</p><p>Test 2: %s</p>", req->query("test1"), req->query("test2"));
   });
 
   app.get("/headers", ^(request_t *req, response_t *res) {
@@ -882,6 +923,18 @@ int main()
 
   app.get("/p/:one/test/:two.jpg/:three", ^(request_t *req, response_t *res) {
     res->sendf("<h1>Testing!</h1><p>One: %s</p><p>Two: %s</p><p>Three: %s</p>", req->param("one"), req->param("two"), req->param("three"));
+  });
+
+  app.get("/form", ^(UNUSED request_t *req, response_t *res) {
+    res->send("<form method=\"POST\" action=\"/post/new\">"
+              "  <input type=\"text\" name=\"param1\">"
+              "  <input type=\"text\" name=\"param2\">"
+              "  <input type=\"submit\" value=\"Submit\">"
+              "</form>");
+  });
+
+  app.post("/post/:form", ^(request_t *req, response_t *res) {
+    res->sendf("<h1>Form</h1><p>Param1 : %s</p><p>Param 2: %s</p>", req->body("param1"), req->body("param2"));
   });
 
   app.listen(port, ^{
