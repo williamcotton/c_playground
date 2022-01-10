@@ -732,7 +732,6 @@ static void freeRequest(request_t req)
   free(req.method);
   free(req.path);
   free(req.url);
-  free(req.rawRequest);
   hash_free(req.queryHash);
   hash_free(req.headersHash);
   hash_free(req.paramsHash);
@@ -891,5 +890,3 @@ int main()
 
   return 0;
 }
-
-// /p/blip/test/bleep.jpg/blop
