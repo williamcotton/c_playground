@@ -200,9 +200,7 @@ typedef struct param_match_t
 {
   char *regex_route;
   char **keys;
-  char **values;
   int count;
-  int match;
 } param_match_t;
 
 param_match_t *paramMatch(char *route)
@@ -210,7 +208,6 @@ param_match_t *paramMatch(char *route)
   param_match_t *pm = malloc(sizeof(param_match_t));
   pm->keys = malloc(sizeof(char *));
   pm->count = 0;
-  pm->match = 0;
   char regex_route[4096];
   regex_route[0] = '\0';
   char *source = route;
@@ -274,11 +271,10 @@ param_match_t *paramMatch(char *route)
   return pm;
 }
 
-void routeMatch(char *path, param_match_t *pm)
+void routeMatch(char *path, param_match_t *pm, char **values, int *match)
 {
   char *source = path;
   char *regexString = pm->regex_route;
-  pm->values = malloc(sizeof(char *));
 
   size_t maxMatches = 100;
   size_t maxGroups = 100;
@@ -310,15 +306,14 @@ void routeMatch(char *path, param_match_t *pm)
       if (g == 0)
       {
         offset = groupArray[g].rm_eo;
-        pm->match = 1;
+        *match = 1;
       }
       else
       {
         int index = g - 1;
-        pm->values = realloc(pm->values, sizeof(char *) * (index + 1));
-        pm->values[index] = malloc(sizeof(char) * (groupArray[g].rm_eo - groupArray[g].rm_so + 1));
-        strncpy(pm->values[index], cursor + groupArray[g].rm_so, groupArray[g].rm_eo - groupArray[g].rm_so);
-        pm->values[index][groupArray[g].rm_eo - groupArray[g].rm_so] = '\0';
+        values[index] = malloc(sizeof(char) * (groupArray[g].rm_eo - groupArray[g].rm_so + 1));
+        strncpy(values[index], cursor + groupArray[g].rm_so, groupArray[g].rm_eo - groupArray[g].rm_so);
+        values[index][groupArray[g].rm_eo - groupArray[g].rm_so] = '\0';
       }
 
       char cursorCopy[strlen(cursor) + 1];
@@ -489,24 +484,6 @@ char *matchFilepath(request_t *req, char *path)
 static void initRouteHandlers()
 {
   routeHandlers = malloc(sizeof(route_handler_t));
-}
-
-void thing()
-{
-  char *path = "/p/blip/test/blob.jpg/bleep.txt";
-  printf("%s\n", path);
-  char *route = "/p/:one/test/:two.jpg/:three.txt";
-  printf("%s\n", route);
-  param_match_t *pm = paramMatch(route);
-  printf("%s\n", pm->regex_route);
-  routeMatch(path, pm);
-
-  for (int i = 0; i < pm->count; i++)
-  {
-    printf("%s: %s\n", pm->keys[i], pm->values[i]);
-    // printf("%s: \n", pm->keys[i]);
-  }
-  free(pm);
 }
 
 static void addRouteHandler(char *method, char *path, requestHandler handler)
@@ -726,17 +703,18 @@ static route_handler_t matchRouteHandler(request_t *req)
     param_match_t *pm = routeHandlers[i].param_match;
     if (pm != NULL)
     {
-      routeMatch(req->path, pm);
-      if (pm->match)
+      char *values[pm->count];
+      int match = 0;
+      routeMatch(req->path, pm, values, &match);
+      if (match)
       {
         req->paramsHash = hash_new();
         for (int i = 0; i < pm->count; i++)
         {
-          hash_set(req->paramsHash, pm->keys[i], pm->values[i]);
+          hash_set(req->paramsHash, pm->keys[i], values[i]);
         }
         req->param = reqParamFactory(req->paramsHash);
-        pm->match = 0;
-        free(pm->values);
+        match = 0;
         return routeHandlers[i];
       }
     }
@@ -754,6 +732,13 @@ static void freeRequest(request_t req)
   free(req.method);
   free(req.path);
   free(req.url);
+  free(req.rawRequest);
+  hash_free(req.queryHash);
+  hash_free(req.headersHash);
+  hash_free(req.paramsHash);
+  Block_release(req.get);
+  Block_release(req.query);
+  Block_release(req.param);
   if (strlen(req.queryString) > 0)
     free(req.queryString);
 }
