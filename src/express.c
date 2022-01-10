@@ -180,10 +180,9 @@ typedef struct
   char *queryString;
   hash_t *queryHash;
   char * (^query)(char *queryKey);
-  struct phr_header *headers;
-  int numHeaders;
-  char *rawRequest;
+  hash_t *headersHash;
   char * (^get)(char *headerKey);
+  char *rawRequest;
 } request_t;
 
 typedef struct
@@ -202,6 +201,13 @@ static getHashBlock reqQueryFactory(hash_t *queryHash)
 {
   return Block_copy(^(char *key) {
     return (char *)hash_get(queryHash, key);
+  });
+}
+
+static getHashBlock reqGetHeaderFactory(hash_t *headersHash)
+{
+  return Block_copy(^(char *key) {
+    return (char *)hash_get(headersHash, key);
   });
 }
 
@@ -480,13 +486,11 @@ static void parseQueryString(request_t *req)
     hash_set(req->queryHash, key, value);
     token = strtok_r(NULL, "&", &saveptr);
   }
-  // printf("buffer: %s\n", buffer);
-  // free(buffer);
 }
 
 static request_t parseRequest(client_t client)
 {
-  request_t req = {.url = NULL, .queryString = "", .path = NULL, .method = NULL, .headers = NULL, .rawRequest = NULL};
+  request_t req = {.url = NULL, .queryString = "", .path = NULL, .method = NULL, .rawRequest = NULL};
   char buf[4096];
   char *method, *url;
   int pret, minor_version;
@@ -517,6 +521,16 @@ static request_t parseRequest(client_t client)
       return req;
   }
 
+  req.headersHash = hash_new();
+  for (size_t i = 0; i != num_headers; ++i)
+  {
+    char *key = malloc(headers[i].name_len + 1);
+    sprintf(key, "%.*s", (int)headers[i].name_len, headers[i].name);
+    char *value = malloc(headers[i].value_len + 1);
+    sprintf(value, "%.*s", (int)headers[i].value_len, headers[i].value);
+    hash_set(req.headersHash, key, value);
+  }
+
   req.rawRequest = buf;
 
   // copy to request struct
@@ -541,36 +555,13 @@ static request_t parseRequest(client_t client)
     *queryStringStart = '\0';
     req.queryHash = hash_new();
     parseQueryString(&req);
-    // printQueryString(req.queryString);
   }
 
   req.path = malloc(strlen(copy) + 1);
   memcpy(req.path, copy, strlen(copy));
   req.path[strlen(copy)] = '\0';
 
-  req.headers = headers;
-  req.numHeaders = num_headers;
-
-  req.get = ^(char *headerKey) {
-    for (int i = 0; i < req.numHeaders; i++)
-    {
-      char *key = malloc(req.headers[i].name_len + 1);
-      char *value = malloc(req.headers[i].value_len + 1);
-      memcpy(key, req.headers[i].name, req.headers[i].name_len);
-      key[req.headers[i].name_len] = '\0';
-      if (strcasecmp(key, headerKey) == 0)
-      {
-
-        memcpy(value, req.headers[i].value, req.headers[i].value_len);
-        value[req.headers[i].value_len] = '\0';
-        return value;
-      }
-      free(key);
-      free(value);
-    }
-    return (char *)NULL;
-  };
-
+  req.get = reqGetHeaderFactory(req.headersHash);
   req.query = reqQueryFactory(req.queryHash);
 
   free(copy);
@@ -606,9 +597,14 @@ static void closeClientConnection(client_t client, request_t req)
   freeRequest(req);
 }
 
-static void buildResponse(response_t *res)
+static response_t buildResponse(client_t client, request_t *req)
 {
-  res->status = 200;
+  response_t res;
+  res.status = 200;
+  res.send = sendFactory(client, &res);
+  res.sendf = sendfFactory(&res);
+  res.sendFile = sendFileFactory(client, req, &res);
+  return res;
 }
 
 static void initClientAcceptEventHandler()
@@ -633,12 +629,7 @@ static void initClientAcceptEventHandler()
           return;
         }
 
-        __block response_t res;
-        buildResponse(&res);
-
-        res.send = sendFactory(client, &res);
-        res.sendf = sendfFactory(&res);
-        res.sendFile = sendFileFactory(client, &req, &res);
+        __block response_t res = buildResponse(client, &req);
 
         runMiddleware(0, &req, &res, ^{
           route_handler_t routeHandler = matchRouteHandler(req);
@@ -649,7 +640,7 @@ static void initClientAcceptEventHandler()
           }
           else
           {
-            routeHandler.handler((request_t *)&req, &res);
+            routeHandler.handler((request_t *)&req, (response_t *)&res);
           }
         });
 
@@ -725,7 +716,7 @@ int main()
   });
 
   app.get("/qs", ^(request_t *req, response_t *res) {
-    res->sendf("<h1>Testing!</h1><p>Test value: %s</p><p>Query string: %s</p>", req->query("test"), req->queryString);
+    res->sendf("<h1>Testing Query String!</h1><p>Test value: %s</p><p>Query string: %s</p>", req->query("test"), req->queryString);
   });
 
   app.get("/headers", ^(request_t *req, response_t *res) {
