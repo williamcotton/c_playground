@@ -38,7 +38,8 @@
     "functional": "c",
     "optional": "c",
     "ratio": "c",
-    "system_error": "c"
+    "system_error": "c",
+    "inet.h": "c"
   },
   "C_Cpp.errorSquiggles": "Disabled"
 }

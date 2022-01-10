@@ -1,3 +1,4 @@
+#include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdarg.h>
@@ -166,13 +167,13 @@ size_t fileSize(char *filePath)
   return st.st_size;
 }
 
-typedef struct
+typedef struct client_t
 {
   int socket;
   char *ip;
 } client_t;
 
-typedef struct
+typedef struct request_t
 {
   char *path;
   char *method;
@@ -187,7 +188,7 @@ typedef struct
   char *rawRequest;
 } request_t;
 
-typedef struct
+typedef struct response_t
 {
   void (^send)(char *);
   void (^sendf)(char *, ...);
@@ -283,14 +284,14 @@ static sendFileBlock sendFileFactory(client_t client, request_t *req, response_t
   });
 }
 
-typedef struct
+typedef struct app_t
 {
   void (^get)(char *path, requestHandler);
   void (^listen)(int port, void (^handler)());
   void (^use)(middlewareHandler);
 } app_t;
 
-typedef struct
+typedef struct route_handler_t
 {
   char *method;
   char *path;
@@ -298,7 +299,7 @@ typedef struct
   requestHandler handler;
 } route_handler_t;
 
-typedef struct
+typedef struct middleware_t
 {
   char *path;
   middlewareHandler handler;
@@ -339,29 +340,6 @@ char *matchFilepath(request_t *req, char *path)
   else
   {
     return NULL;
-  }
-}
-
-void writeStaticFile(FILE *fp, int fd)
-{
-  char buffer[1024];
-  while (1)
-  {
-    memset(buffer, 0, sizeof(buffer));
-    size_t size = fread(buffer, 1, sizeof(buffer), fp);
-    if (size < 0)
-    {
-      perror("read error");
-      exit(5);
-    }
-    if (size == 0)
-    {
-      break;
-    }
-    //     Content-Type: text/plain; charset=UTF-8
-    // < Content-Length: 14
-    // Content-Length: 14
-    write(fd, buffer, size);
   }
 }
 
@@ -531,7 +509,7 @@ static request_t parseRequest(client_t client)
     else if (pret == -1)
       return req;
     /* request is incomplete, continue the loop */
-    // assert(pret == -2);
+    assert(pret == -2);
     if (buflen == sizeof(buf))
       return req;
   }
