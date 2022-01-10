@@ -196,6 +196,141 @@ typedef struct response_t
   int status;
 } response_t;
 
+typedef struct param_match_t
+{
+  char *regex_route;
+  char **keys;
+  char **values;
+  int count;
+  int match;
+} param_match_t;
+
+param_match_t *paramMatch(char *route)
+{
+  param_match_t *pm = malloc(sizeof(param_match_t));
+  pm->keys = malloc(sizeof(char *));
+  pm->count = 0;
+  pm->match = 0;
+  char regex_route[4096];
+  regex_route[0] = '\0';
+  char *source = route;
+  char *regexString = ":([A-Za-z0-9_]*)";
+  size_t maxMatches = 100;
+  size_t maxGroups = 100;
+
+  regex_t regexCompiled;
+  regmatch_t groupArray[maxGroups];
+  unsigned int m;
+  char *cursor;
+
+  if (regcomp(&regexCompiled, regexString, REG_EXTENDED))
+  {
+    printf("Could not compile regular expression.\n");
+    return NULL;
+  };
+
+  cursor = source;
+  for (m = 0; m < maxMatches; m++)
+  {
+    if (regexec(&regexCompiled, cursor, maxGroups, groupArray, 0))
+      break; // No more matches
+
+    unsigned int g = 0;
+    unsigned int offset = 0;
+    for (g = 0; g < maxGroups; g++)
+    {
+      if (groupArray[g].rm_so == (long long)(size_t)-1)
+        break; // No more groups
+
+      char cursorCopy[strlen(cursor) + 1];
+      strcpy(cursorCopy, cursor);
+      cursorCopy[groupArray[g].rm_eo] = 0;
+
+      if (g == 0)
+      {
+        offset = groupArray[g].rm_eo;
+        sprintf(regex_route + strlen(regex_route), "%.*s(.*)", (int)groupArray[g].rm_so, cursorCopy);
+      }
+      else
+      {
+        pm->keys = realloc(pm->keys, sizeof(char *) * (m + 1));
+        pm->count++;
+        char *key = malloc(sizeof(char) * (groupArray[g].rm_eo - groupArray[g].rm_so + 1));
+        strncpy(key, cursorCopy + groupArray[g].rm_so, groupArray[g].rm_eo - groupArray[g].rm_so);
+        key[groupArray[g].rm_eo - groupArray[g].rm_so] = '\0';
+        pm->keys[m] = key;
+      }
+    }
+    cursor += offset;
+  }
+
+  sprintf(regex_route + strlen(regex_route), "%s", cursor);
+
+  regfree(&regexCompiled);
+
+  pm->regex_route = malloc(strlen(regex_route) + 1);
+  strcpy(pm->regex_route, regex_route);
+
+  return pm;
+}
+
+void routeMatch(char *path, param_match_t *pm)
+{
+  char *source = path;
+  char *regexString = pm->regex_route;
+  pm->values = malloc(sizeof(char *));
+
+  size_t maxMatches = 100;
+  size_t maxGroups = 100;
+
+  regex_t regexCompiled;
+  regmatch_t groupArray[maxGroups];
+  unsigned int m;
+  char *cursor;
+
+  if (regcomp(&regexCompiled, regexString, REG_EXTENDED))
+  {
+    printf("Could not compile regular expression.\n");
+    return;
+  };
+
+  cursor = source;
+  for (m = 0; m < maxMatches; m++)
+  {
+    if (regexec(&regexCompiled, cursor, maxGroups, groupArray, 0))
+      break; // No more matches
+
+    unsigned int g = 0;
+    unsigned int offset = 0;
+    for (g = 0; g < maxGroups; g++)
+    {
+      if (groupArray[g].rm_so == (long long)(size_t)-1)
+        break; // No more groups
+
+      if (g == 0)
+      {
+        offset = groupArray[g].rm_eo;
+        pm->match = 1;
+      }
+      else
+      {
+        int index = g - 1;
+        pm->values = realloc(pm->values, sizeof(char *) * (index + 1));
+        pm->values[index] = malloc(sizeof(char) * (groupArray[g].rm_eo - groupArray[g].rm_so + 1));
+        strncpy(pm->values[index], cursor + groupArray[g].rm_so, groupArray[g].rm_eo - groupArray[g].rm_so);
+        pm->values[index][groupArray[g].rm_eo - groupArray[g].rm_so] = '\0';
+      }
+
+      char cursorCopy[strlen(cursor) + 1];
+      strcpy(cursorCopy, cursor);
+      cursorCopy[groupArray[g].rm_eo] = 0;
+    }
+    cursor += offset;
+  }
+
+  regfree(&regexCompiled);
+}
+
 typedef void (^requestHandler)(request_t *req, response_t *res);
 typedef void (^middlewareHandler)(request_t *req, response_t *res, void (^next)());
 
@@ -211,6 +346,13 @@ static getHashBlock reqGetHeaderFactory(hash_t *headersHash)
 {
   return Block_copy(^(char *key) {
     return (char *)hash_get(headersHash, key);
+  });
+}
+
+static getHashBlock reqParamFactory(hash_t *paramsHash)
+{
+  return Block_copy(^(char *key) {
+    return (char *)hash_get(paramsHash, key);
   });
 }
 
@@ -296,6 +438,7 @@ typedef struct route_handler_t
   char *method;
   char *path;
   int regex;
+  param_match_t *param_match;
   requestHandler handler;
 } route_handler_t;
 
@@ -348,22 +491,36 @@ static void initRouteHandlers()
   routeHandlers = malloc(sizeof(route_handler_t));
 }
 
+void thing()
+{
+  char *path = "/p/blip/test/blob.jpg/bleep.txt";
+  printf("%s\n", path);
+  char *route = "/p/:one/test/:two.jpg/:three.txt";
+  printf("%s\n", route);
+  param_match_t *pm = paramMatch(route);
+  printf("%s\n", pm->regex_route);
+  routeMatch(path, pm);
+
+  for (int i = 0; i < pm->count; i++)
+  {
+    printf("%s: %s\n", pm->keys[i], pm->values[i]);
+    // printf("%s: \n", pm->keys[i]);
+  }
+  free(pm);
+}
+
 static void addRouteHandler(char *method, char *path, requestHandler handler)
 {
-  // The name of route parameters must be made up of “word characters” ([A-Za-z0-9_]).
-  // https://regexr.com/6d0iv
-  // /p/:one/test/:two.jpg/:three
-  // :([A-Za-z0-9_]*)
-
-  // https://regexr.com/6d0j8
-  // /p/blip/test/blob.sdf/bleep
-  // \/p\/(.*)\/test\/(.*).sdf\/(.*)
-
-  // Multiple matches: https://gist.github.com/ianmackinnon/3294587
-
   int regex = strchr(path, ':') != NULL;
   routeHandlers = realloc(routeHandlers, sizeof(route_handler_t) * (routeHandlerCount + 1));
-  routeHandlers[routeHandlerCount++] = (route_handler_t){.method = method, .path = path, .handler = handler, .regex = regex};
+  route_handler_t routeHandler = {
+      .method = method,
+      .path = path,
+      .regex = regex,
+      .param_match = regex ? paramMatch(path) : NULL,
+      .handler = handler,
+  };
+  routeHandlers[routeHandlerCount++] = routeHandler;
 }
 
 static void initMiddlewareHandlers()
@@ -562,11 +719,29 @@ static request_t parseRequest(client_t client)
   return req;
 }
 
-static route_handler_t matchRouteHandler(request_t req)
+static route_handler_t matchRouteHandler(request_t *req)
 {
   for (int i = 0; i < routeHandlerCount; i++)
   {
-    if (strcmp(routeHandlers[i].method, req.method) == 0 && strcmp(routeHandlers[i].path, req.path) == 0)
+    param_match_t *pm = routeHandlers[i].param_match;
+    if (pm != NULL)
+    {
+      routeMatch(req->path, pm);
+      if (pm->match)
+      {
+        req->paramsHash = hash_new();
+        for (int i = 0; i < pm->count; i++)
+        {
+          hash_set(req->paramsHash, pm->keys[i], pm->values[i]);
+        }
+        req->param = reqParamFactory(req->paramsHash);
+        pm->match = 0;
+        free(pm->values);
+        return routeHandlers[i];
+      }
+    }
+
+    if (strcmp(routeHandlers[i].method, req->method) == 0 && strcmp(routeHandlers[i].path, req->path) == 0)
     {
       return routeHandlers[i];
     }
@@ -625,7 +800,7 @@ static void initClientAcceptEventHandler()
         __block response_t res = buildResponse(client, &req);
 
         runMiddleware(0, &req, &res, ^{
-          route_handler_t routeHandler = matchRouteHandler(req);
+          route_handler_t routeHandler = matchRouteHandler((request_t *)&req);
           if (routeHandler.handler == NULL)
           {
             res.status = 404;
@@ -731,3 +906,5 @@ int main()
 
   return 0;
 }
+
+// /p/blip/test/bleep.jpg/blop
