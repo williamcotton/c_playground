@@ -182,6 +182,8 @@ typedef struct
   char * (^query)(char *queryKey);
   hash_t *headersHash;
   char * (^get)(char *headerKey);
+  hash_t *paramsHash;
+  char * (^param)(char *paramKey);
   char *rawRequest;
 } request_t;
 
@@ -292,6 +294,7 @@ typedef struct
 {
   char *method;
   char *path;
+  int regex;
   requestHandler handler;
 } route_handler_t;
 
@@ -369,8 +372,20 @@ static void initRouteHandlers()
 
 static void addRouteHandler(char *method, char *path, requestHandler handler)
 {
+  // The name of route parameters must be made up of “word characters” ([A-Za-z0-9_]).
+  // https://regexr.com/6d0iv
+  // /p/:one/test/:two.jpg/:three
+  // :([A-Za-z0-9_]*)
+
+  // https://regexr.com/6d0j8
+  // /p/blip/test/blob.sdf/bleep
+  // \/p\/(.*)\/test\/(.*).sdf\/(.*)
+
+  // Multiple matches: https://gist.github.com/ianmackinnon/3294587
+
+  int regex = strchr(path, ':') != NULL;
   routeHandlers = realloc(routeHandlers, sizeof(route_handler_t) * (routeHandlerCount + 1));
-  routeHandlers[routeHandlerCount++] = (route_handler_t){.method = method, .path = path, .handler = handler};
+  routeHandlers[routeHandlerCount++] = (route_handler_t){.method = method, .path = path, .handler = handler, .regex = regex};
 }
 
 static void initMiddlewareHandlers()
@@ -725,6 +740,10 @@ int main()
 
   app.get("/file", ^(UNUSED request_t *req, response_t *res) {
     res->sendFile("./files/test.txt");
+  });
+
+  app.get("/p/:one/test/:two.jpg/:three", ^(request_t *req, response_t *res) {
+    res->sendf("<h1>Testing!</h1><p>One: %s</p><p>Two: %s</p><p>Three: %s</p>", req->param("one"), req->param("two"), req->param("three"));
   });
 
   app.listen(port, ^{
