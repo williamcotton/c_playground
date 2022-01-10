@@ -705,6 +705,7 @@ int main()
   });
 
   app.get("/test", ^(UNUSED request_t *req, response_t *res) {
+    res->status = 201;
     res->send("Testing, testing!");
   });
 
