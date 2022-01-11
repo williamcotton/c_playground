@@ -668,6 +668,8 @@ static request_t parseRequest(client_t client)
 
   req.rawRequest = buf;
 
+  printf("%s\n", req.rawRequest);
+
   // copy to request struct
 
   req.method = malloc(method_len + 1);
@@ -934,6 +936,7 @@ int main()
   });
 
   app.post("/post/:form", ^(request_t *req, response_t *res) {
+    res->status = 201;
     res->sendf("<h1>Form</h1><p>Param1 : %s</p><p>Param 2: %s</p>", req->body("param1"), req->body("param2"));
   });
 
