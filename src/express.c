@@ -654,6 +654,7 @@ static request_t parseRequest(client_t client)
 {
   request_t req = {.url = NULL, .queryString = "", .path = NULL, .method = NULL, .rawRequest = NULL};
   char buf[4096];
+  memset(buf, 0, sizeof(buf));
   char *method, *url;
   int pret, minor_version;
   struct phr_header headers[100];
@@ -662,29 +663,30 @@ static request_t parseRequest(client_t client)
 
   while (1)
   {
-    /* read the request */
     while ((rret = read(client.socket, buf + buflen, sizeof(buf) - buflen)) == -1)
       ;
     if (rret <= 0)
       return req;
     prevbuflen = buflen;
     buflen += rret;
-    /* parse the request */
     num_headers = sizeof(headers) / sizeof(headers[0]);
     pret = phr_parse_request(buf, buflen, (const char **)&method, &method_len, (const char **)&url, &url_len,
                              &minor_version, headers, &num_headers, prevbuflen);
     if (pret > 0)
-      break; /* successfully parsed the request */
+    {
+      if (method[0] == 'P' && pret == rret)
+        while ((read(client.socket, buf + buflen, sizeof(buf) - buflen)) == -1)
+          ;
+      break;
+    }
     else if (pret == -1)
       return req;
-    /* request is incomplete, continue the loop */
     assert(pret == -2);
     if (buflen == sizeof(buf))
       return req;
   }
 
   req.rawRequest = strdup(buf);
-  printf("%s\n", req.rawRequest);
 
   req.headersHash = hash_new();
   for (size_t i = 0; i != num_headers; ++i)
@@ -695,8 +697,6 @@ static request_t parseRequest(client_t client)
     sprintf(value, "%.*s", (int)headers[i].value_len, headers[i].value);
     hash_set(req.headersHash, key, value);
   }
-
-  // copy to request struct
 
   req.method = malloc(method_len + 1);
   memcpy(req.method, method, method_len);
