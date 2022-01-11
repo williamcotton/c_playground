@@ -167,6 +167,22 @@ size_t fileSize(char *filePath)
   return st.st_size;
 }
 
+static void parseQueryString(hash_t *hash, char *string)
+{
+  char *query = strdup(string);
+  char *tokens = query;
+  char *p = query;
+  while ((p = strsep(&tokens, "&\n")))
+  {
+    char *key = strtok(p, "=");
+    char *value = NULL;
+    if (key && (value = strtok(NULL, "=")))
+      hash_set(hash, key, value);
+    else
+      hash_set(hash, key, "");
+  }
+}
+
 typedef struct client_t
 {
   int socket;
@@ -333,31 +349,58 @@ typedef void (^requestHandler)(request_t *req, response_t *res);
 typedef void (^middlewareHandler)(request_t *req, response_t *res, void (^next)());
 
 typedef char * (^getHashBlock)(char *key);
-static getHashBlock reqQueryFactory(hash_t *queryHash)
+static getHashBlock reqQueryFactory(request_t *req)
 {
   return Block_copy(^(char *key) {
-    return (char *)hash_get(queryHash, key);
+    return (char *)hash_get(req->queryHash, key);
   });
 }
 
-static getHashBlock reqGetHeaderFactory(hash_t *headersHash)
+static getHashBlock reqGetHeaderFactory(request_t *req)
 {
   return Block_copy(^(char *key) {
-    return (char *)hash_get(headersHash, key);
+    return (char *)hash_get(req->headersHash, key);
   });
 }
 
-static getHashBlock reqParamFactory(hash_t *paramsHash)
+static getHashBlock reqParamFactory(request_t *req)
 {
   return Block_copy(^(char *key) {
-    return (char *)hash_get(paramsHash, key);
+    return (char *)hash_get(req->paramsHash, key);
   });
 }
 
-static getHashBlock reqBodyFactory(hash_t *bodyHash)
+static getHashBlock reqBodyFactory(request_t *req)
 {
+  req->bodyHash = hash_new();
+  if (strncmp(req->method, "POST", 4) == 0)
+  {
+    char *copy = strdup(req->rawRequest);
+    req->bodyString = strstr(copy, "\r\n\r\n");
+
+    if (req->bodyString && strlen(req->bodyString) > 4)
+    {
+      req->bodyString += 4;
+      if (strncmp(req->get("Content-Type"), "application/x-www-form-urlencoded", 33) == 0)
+      {
+        parseQueryString(req->bodyHash, req->bodyString);
+      }
+      else if (strncmp(req->get("Content-Type"), "application/json", 16) == 0)
+      {
+        printf("%s\n", req->bodyString);
+      }
+      else if (strncmp(req->get("Content-Type"), "multipart/form-data", 20) == 0)
+      {
+        printf("%s\n", req->bodyString);
+      }
+    }
+    else
+    {
+      req->bodyString = "";
+    }
+  }
   return Block_copy(^(char *key) {
-    return (char *)hash_get(bodyHash, key);
+    return (char *)hash_get(req->bodyHash, key);
   });
 }
 
@@ -607,22 +650,6 @@ static void initServerListen(int port)
   }
 };
 
-static void parseQueryString(hash_t *hash, char *string)
-{
-  char *query = strdup(string);
-  char *tokens = query;
-  char *p = query;
-  while ((p = strsep(&tokens, "&\n")))
-  {
-    char *key = strtok(p, "=");
-    char *value = NULL;
-    if (key && (value = strtok(NULL, "=")))
-      hash_set(hash, key, value);
-    else
-      hash_set(hash, key, "");
-  }
-}
-
 static request_t parseRequest(client_t client)
 {
   request_t req = {.url = NULL, .queryString = "", .path = NULL, .method = NULL, .rawRequest = NULL};
@@ -656,6 +683,9 @@ static request_t parseRequest(client_t client)
       return req;
   }
 
+  req.rawRequest = strdup(buf);
+  printf("%s\n", req.rawRequest);
+
   req.headersHash = hash_new();
   for (size_t i = 0; i != num_headers; ++i)
   {
@@ -665,10 +695,6 @@ static request_t parseRequest(client_t client)
     sprintf(value, "%.*s", (int)headers[i].value_len, headers[i].value);
     hash_set(req.headersHash, key, value);
   }
-
-  req.rawRequest = buf;
-
-  printf("%s\n", req.rawRequest);
 
   // copy to request struct
 
@@ -698,36 +724,9 @@ static request_t parseRequest(client_t client)
   memcpy(req.path, copy, strlen(copy));
   req.path[strlen(copy)] = '\0';
 
-  req.get = reqGetHeaderFactory(req.headersHash);
-  req.query = reqQueryFactory(req.queryHash);
-
-  if (strncmp(req.method, "POST", 4) == 0)
-  {
-    char *copy = strdup(req.rawRequest);
-    req.bodyString = strstr(copy, "\r\n\r\n");
-    req.bodyHash = hash_new();
-    if (req.bodyString && strlen(req.bodyString) > 4)
-    {
-      req.bodyString += 4;
-      if (strncmp(req.get("Content-Type"), "application/x-www-form-urlencoded", 33) == 0)
-      {
-        parseQueryString(req.bodyHash, req.bodyString);
-      }
-      else if (strncmp(req.get("Content-Type"), "application/json", 16) == 0)
-      {
-        printf("%s\n", req.bodyString);
-      }
-      else if (strncmp(req.get("Content-Type"), "multipart/form-data", 20) == 0)
-      {
-        printf("%s\n", req.bodyString);
-      }
-    }
-    else
-    {
-      req.bodyString = "";
-    }
-    req.body = reqBodyFactory(req.bodyHash);
-  }
+  req.get = reqGetHeaderFactory(&req);
+  req.query = reqQueryFactory(&req);
+  req.body = reqBodyFactory(&req);
 
   free(copy);
 
@@ -738,6 +737,8 @@ static route_handler_t matchRouteHandler(request_t *req)
 {
   for (int i = 0; i < routeHandlerCount; i++)
   {
+    if (strcmp(routeHandlers[i].method, req->method) != 0)
+      continue;
     param_match_t *pm = routeHandlers[i].param_match;
     if (pm != NULL)
     {
@@ -751,7 +752,7 @@ static route_handler_t matchRouteHandler(request_t *req)
         {
           hash_set(req->paramsHash, pm->keys[i], values[i]);
         }
-        req->param = reqParamFactory(req->paramsHash);
+        req->param = reqParamFactory(req);
         match = 0;
         return routeHandlers[i];
       }
