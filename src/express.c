@@ -686,7 +686,7 @@ static request_t parseRequest(client_t client)
       return req;
   }
 
-  req.rawRequest = strdup(buf);
+  req.rawRequest = buf;
 
   req.headersHash = hash_new();
   for (size_t i = 0; i != num_headers; ++i)
@@ -811,34 +811,30 @@ static void initClientAcceptEventHandler()
       if (client.socket < 0)
         continue;
 
-      dispatch_source_t readSource = dispatch_source_create(DISPATCH_SOURCE_TYPE_READ, client.socket, 0, serverQueue);
-      dispatch_source_set_event_handler(readSource, ^{
-        request_t req = parseRequest(client);
+      request_t req = parseRequest(client);
 
-        if (req.method == NULL)
-        {
-          closeClientConnection(client, req);
-          return;
-        }
-
-        __block response_t res = buildResponse(client, &req);
-
-        runMiddleware(0, &req, &res, ^{
-          route_handler_t routeHandler = matchRouteHandler((request_t *)&req);
-          if (routeHandler.handler == NULL)
-          {
-            res.status = 404;
-            res.sendf(errorHTML, req.path);
-          }
-          else
-          {
-            routeHandler.handler((request_t *)&req, (response_t *)&res);
-          }
-        });
-
+      if (req.method == NULL)
+      {
         closeClientConnection(client, req);
+        return;
+      }
+
+      __block response_t res = buildResponse(client, &req);
+
+      runMiddleware(0, &req, &res, ^{
+        route_handler_t routeHandler = matchRouteHandler((request_t *)&req);
+        if (routeHandler.handler == NULL)
+        {
+          res.status = 404;
+          res.sendf(errorHTML, req.path);
+        }
+        else
+        {
+          routeHandler.handler((request_t *)&req, (response_t *)&res);
+        }
       });
-      dispatch_resume(readSource);
+
+      closeClientConnection(client, req);
     }
   });
 
