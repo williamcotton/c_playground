@@ -12,7 +12,7 @@ RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
 
 WORKDIR /vscode
 RUN pwd
-RUN git clone git://github.com/apple/swift-corelibs-libdispatch.git
+RUN git clone https://github.com/apple/swift-corelibs-libdispatch.git
 WORKDIR /vscode/swift-corelibs-libdispatch
 RUN ls -al
 RUN cmake -G Ninja -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ .
