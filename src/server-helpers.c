@@ -25,7 +25,7 @@ void get(char *path, char request[1024], void (^handler)())
   if (reti == 0)
   {
     printf("Matched\n");
-    printf("%lld %lld\n", pmatch[1].rm_so, pmatch[1].rm_eo);
+    printf("%d %d\n", (int)pmatch[1].rm_so, (int)pmatch[1].rm_eo);
     char *mpath = request + pmatch[1].rm_so;
     mpath[pmatch[1].rm_eo - pmatch[1].rm_so] = 0;
     printf("path: %s\n", mpath);

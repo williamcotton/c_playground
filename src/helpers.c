@@ -3,6 +3,9 @@
 #include <string.h>
 #include <curl/curl.h>
 #include <dotenv-c/dotenv.h>
+#ifdef __linux__
+#include <bsd/string.h>
+#endif
 #include "helpers.h"
 
 int compare_int(const void *a, const void *b)
