@@ -11,6 +11,7 @@
 #include <picohttpparser/picohttpparser.h>
 #include <sys/stat.h>
 #include <hash/hash.h>
+#include <signal.h>
 
 #define UNUSED __attribute__((unused))
 
@@ -653,12 +654,13 @@ static void initServerListen(int port)
 static request_t parseRequest(client_t client)
 {
   request_t req = {.url = NULL, .queryString = "", .path = NULL, .method = NULL, .rawRequest = NULL};
+
   char buf[4096];
   memset(buf, 0, sizeof(buf));
   char *method, *url;
   int pret, minor_version;
   struct phr_header headers[100];
-  size_t buflen = 0, prevbuflen = 0, method_len, queryString_len, url_len, num_headers;
+  size_t buflen = 0, prevbuflen = 0, method_len, url_len, num_headers;
   ssize_t rret;
 
   while (1)
@@ -711,7 +713,7 @@ static request_t parseRequest(client_t client)
 
   if (queryStringStart)
   {
-    queryString_len = strlen(queryStringStart + 1);
+    int queryString_len = strlen(queryStringStart + 1);
     req.queryString = malloc(queryString_len + 1);
     memcpy(req.queryString, queryStringStart + 1, queryString_len);
     req.queryString[queryString_len] = '\0';
@@ -841,12 +843,25 @@ static void initClientAcceptEventHandler()
   dispatch_resume(acceptSource);
 }
 
+static void closeServer()
+{
+  printf("\nClosing server...\n");
+  free(routeHandlers);
+  free(middlewares);
+  close(servSock);
+  dispatch_release(serverQueue);
+  exit(EXIT_SUCCESS);
+}
+
 app_t express()
 {
   initMiddlewareHandlers();
   initRouteHandlers();
   initServerQueue();
   initServerSocket();
+
+  if (signal(SIGINT, closeServer) == SIG_ERR)
+    ;
 
   app_t app;
 
