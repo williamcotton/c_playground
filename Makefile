@@ -7,7 +7,9 @@ TEST_DIR = test
 PLATFORM := $(shell sh -c 'uname -s 2>/dev/null | tr 'a-z' 'A-Z'')
 
 ifeq ($(PLATFORM),LINUX)
-	CFLAGS += -lBlocksRuntime -ldispatch -lbsd -fsanitize=leak
+	CFLAGS += -lBlocksRuntime -ldispatch -lbsd
+else ifeq ($(PLATFORM),DARWIN)
+	CFLAGS += -fsanitize=address
 endif
 
 all: $(TARGETS)

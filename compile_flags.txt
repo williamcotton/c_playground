@@ -6,7 +6,6 @@
 -Wextra
 -Ideps
 -lm
--fsanitize=address
 -fno-omit-frame-pointer
 -fno-optimize-sibling-calls
 -ftime-trace
