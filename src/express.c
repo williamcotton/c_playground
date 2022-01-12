@@ -15,6 +15,52 @@
 
 #define UNUSED __attribute__((unused))
 
+char *curl(char *cmd)
+{
+  system(cmd);
+  FILE *file = fopen("./test/test-response.html", "r");
+  char *html = malloc(4096);
+  size_t bytesRead = fread(html, 1, 4096, file);
+  html[bytesRead] = '\0';
+  fclose(file);
+  system("rm ./test/test-response.html");
+  return html;
+}
+
+char *curlGet(char *url)
+{
+  char *curlCmd = "curl -s -o ./test/test-response.html http://127.0.0.1:3000";
+  char *cmd = malloc(strlen(curlCmd) + strlen(url) + 1);
+  sprintf(cmd, "%s%s", curlCmd, url);
+  return curl(cmd);
+}
+
+char *curlPost(char *url, char *data)
+{
+  char *curlCmd = "curl -X POST -s -o ./test/test-response.html -H \"Content-Type: application/x-www-form-urlencoded\" -d \"\" http://127.0.0.1:3000";
+  char *cmd = malloc(strlen(curlCmd) + strlen(url) + strlen(data) + 1);
+  sprintf(cmd, "curl -X POST -s -o ./test/test-response.html -H \"Content-Type: application/x-www-form-urlencoded\" -d \"%s\" http://127.0.0.1:3000%s", data, url);
+  return curl(cmd);
+}
+
+int testEq(char *testName, char *response, char *expected)
+{
+  int status = 0;
+  if (strcmp(response, expected) != 0)
+  {
+    printf("%s: FAIL\n", testName);
+    printf("\tExpected: %s\n", expected);
+    printf("\tReceived: %s\n", response);
+    status = 1;
+  }
+  else
+  {
+    printf("%s: PASS\n", testName);
+  }
+  free(response);
+  return status;
+}
+
 static char *errorHTML = "<!DOCTYPE html>\n"
                          "<html lang=\"en\">\n"
                          "<head>\n"
@@ -663,6 +709,7 @@ static request_t parseRequest(client_t client)
   size_t buflen = 0, prevbuflen = 0, method_len, url_len, num_headers;
   ssize_t rret;
 
+  // TODO: timeout support
   while (1)
   {
     while ((rret = read(client.socket, buf + buflen, sizeof(buf) - buflen)) == -1)
@@ -903,6 +950,19 @@ middlewareHandler expressStatic(char *path)
   });
 }
 
+void runTests()
+{
+  testEq("root", curlGet("/"), "Hello World!");
+  testEq("basic route", curlGet("/test"), "Testing, testing!");
+  testEq("query string", curlGet("/qs\?value1=123\\&value2=345"), "<h1>Query String</h1><p>Value 1: 123</p><p>Value 2: 345</p>");
+  testEq("headers", curlGet("/headers"), "<h1>Headers</h1><p>Host: 127.0.0.1:3000</p><p>Accept: */*</p>");
+  testEq("route params", curlGet("/one/123/two/345/567.jpg"), "<h1>Params</h1><p>One: 123</p><p>Two: 345</p><p>Three: 567</p>");
+  testEq("send file", curlGet("/file"), "hello, world!\n");
+  testEq("static file middleware", curlGet("/files/test2.txt"), "this is a test!!!");
+  testEq("form data", curlPost("/post/form123", "param1=123&param2=345"), "<h1>Form</h1><p>Param 1: 123</p><p>Param 2: 345</p>");
+  exit(EXIT_SUCCESS);
+}
+
 int main()
 {
   app_t app = express();
@@ -924,19 +984,19 @@ int main()
   });
 
   app.get("/qs", ^(request_t *req, response_t *res) {
-    res->sendf("<h1>Testing Query String!</h1><p>Test 1: %s</p><p>Test 2: %s</p>", req->query("test1"), req->query("test2"));
+    res->sendf("<h1>Query String</h1><p>Value 1: %s</p><p>Value 2: %s</p>", req->query("value1"), req->query("value2"));
   });
 
   app.get("/headers", ^(request_t *req, response_t *res) {
-    res->sendf("<h1>Testing!</h1><p>User-Agent: %s</p><p>Host: %s</p>", req->get("User-Agent"), req->get("Host"));
+    res->sendf("<h1>Headers</h1><p>Host: %s</p><p>Accept: %s</p>", req->get("Host"), req->get("Accept"));
   });
 
   app.get("/file", ^(UNUSED request_t *req, response_t *res) {
     res->sendFile("./files/test.txt");
   });
 
-  app.get("/p/:one/test/:two.jpg/:three", ^(request_t *req, response_t *res) {
-    res->sendf("<h1>Testing!</h1><p>One: %s</p><p>Two: %s</p><p>Three: %s</p>", req->param("one"), req->param("two"), req->param("three"));
+  app.get("/one/:one/two/:two/:three.jpg", ^(request_t *req, response_t *res) {
+    res->sendf("<h1>Params</h1><p>One: %s</p><p>Two: %s</p><p>Three: %s</p>", req->param("one"), req->param("two"), req->param("three"));
   });
 
   app.get("/form", ^(UNUSED request_t *req, response_t *res) {
@@ -949,11 +1009,12 @@ int main()
 
   app.post("/post/:form", ^(request_t *req, response_t *res) {
     res->status = 201;
-    res->sendf("<h1>Form</h1><p>Param1 : %s</p><p>Param 2: %s</p>", req->body("param1"), req->body("param2"));
+    res->sendf("<h1>Form</h1><p>Param 1: %s</p><p>Param 2: %s</p>", req->body("param1"), req->body("param2"));
   });
 
   app.listen(port, ^{
     printf("Example app listening at http://localhost:%d\n", port);
+    runTests();
   });
 
   return 0;
