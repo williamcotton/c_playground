@@ -218,7 +218,7 @@ static void parseQueryString(hash_t *hash, char *string)
 {
   char *query = strdup(string);
   char *tokens = query;
-  char *p = query;
+  char *p;
   while ((p = strsep(&tokens, "&\n")))
   {
     char *key = strtok(p, "=");
@@ -445,6 +445,7 @@ static getHashBlock reqBodyFactory(request_t *req)
     {
       req->bodyString = "";
     }
+    free(copy);
   }
   return Block_copy(^(char *key) {
     return (char *)hash_get(req->bodyHash, key);
