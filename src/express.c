@@ -264,7 +264,7 @@ typedef struct response_t
 
 typedef struct param_match_t
 {
-  char *regex_route;
+  char *regexRoute;
   char **keys;
   int count;
 } param_match_t;
@@ -274,8 +274,8 @@ param_match_t *paramMatch(char *route)
   param_match_t *pm = malloc(sizeof(param_match_t));
   pm->keys = malloc(sizeof(char *));
   pm->count = 0;
-  char regex_route[4096];
-  regex_route[0] = '\0';
+  char regexRoute[4096];
+  regexRoute[0] = '\0';
   char *source = route;
   char *regexString = ":([A-Za-z0-9_]*)";
   size_t maxMatches = 100;
@@ -312,7 +312,7 @@ param_match_t *paramMatch(char *route)
       if (g == 0)
       {
         offset = groupArray[g].rm_eo;
-        sprintf(regex_route + strlen(regex_route), "%.*s(.*)", (int)groupArray[g].rm_so, cursorCopy);
+        sprintf(regexRoute + strlen(regexRoute), "%.*s(.*)", (int)groupArray[g].rm_so, cursorCopy);
       }
       else
       {
@@ -327,12 +327,12 @@ param_match_t *paramMatch(char *route)
     cursor += offset;
   }
 
-  sprintf(regex_route + strlen(regex_route), "%s", cursor);
+  sprintf(regexRoute + strlen(regexRoute), "%s", cursor);
 
   regfree(&regexCompiled);
 
-  pm->regex_route = malloc(strlen(regex_route) + 1);
-  strcpy(pm->regex_route, regex_route);
+  pm->regexRoute = malloc(strlen(regexRoute) + 1);
+  strcpy(pm->regexRoute, regexRoute);
 
   return pm;
 }
@@ -340,7 +340,7 @@ param_match_t *paramMatch(char *route)
 void routeMatch(char *path, param_match_t *pm, char **values, int *match)
 {
   char *source = path;
-  char *regexString = pm->regex_route;
+  char *regexString = pm->regexRoute;
 
   size_t maxMatches = 100;
   size_t maxGroups = 100;
@@ -509,14 +509,14 @@ static sendFileBlock sendFileFactory(client_t client, request_t *req, response_t
     // TODO: mimetype
     sprintf(response, "HTTP/1.1 200 OK\r\nContent-Length: %zu\r\n\r\n", fileSize(path));
     write(client.socket, response, strlen(response));
-    char *buffer = malloc(4096);
-    size_t bytesRead = fread(buffer, 1, 4096, file);
+    char *bufferfer = malloc(4096);
+    size_t bytesRead = fread(bufferfer, 1, 4096, file);
     while (bytesRead > 0)
     {
-      write(client.socket, buffer, bytesRead);
-      bytesRead = fread(buffer, 1, 4096, file);
+      write(client.socket, bufferfer, bytesRead);
+      bytesRead = fread(bufferfer, 1, 4096, file);
     }
-    free(buffer);
+    free(bufferfer);
     free(response);
     fclose(file);
   });
@@ -535,7 +535,7 @@ typedef struct route_handler_t
   char *method;
   char *path;
   int regex;
-  param_match_t *param_match;
+  param_match_t *paramMatch;
   requestHandler handler;
 } route_handler_t;
 
@@ -560,18 +560,18 @@ char *matchFilepath(request_t *req, char *path)
   regmatch_t pmatch[2];
   char *pattern = malloc(sizeof(char) * (strlen(path) + strlen("//(.*)") + 1));
   sprintf(pattern, "/%s/(.*)", path);
-  char *buffer = malloc(sizeof(char) * (strlen(req->url) + 1));
-  strcpy(buffer, req->path);
+  char *bufferfer = malloc(sizeof(char) * (strlen(req->url) + 1));
+  strcpy(bufferfer, req->path);
   reti = regcomp(&regex, pattern, REG_EXTENDED);
   if (reti)
   {
     fprintf(stderr, "Could not compile regex\n");
     exit(6);
   }
-  reti = regexec(&regex, buffer, nmatch, pmatch, 0);
+  reti = regexec(&regex, bufferfer, nmatch, pmatch, 0);
   if (reti == 0)
   {
-    char *fileName = buffer + pmatch[1].rm_so;
+    char *fileName = bufferfer + pmatch[1].rm_so;
     fileName[pmatch[1].rm_eo - pmatch[1].rm_so] = 0;
     char *file_path = malloc(sizeof(char) * (strlen(fileName) + strlen(".//") + strlen(path) + 1));
     sprintf(file_path, "./%s/%s", path, fileName);
@@ -596,7 +596,7 @@ static void addRouteHandler(char *method, char *path, requestHandler handler)
       .method = method,
       .path = path,
       .regex = regex,
-      .param_match = regex ? paramMatch(path) : NULL,
+      .paramMatch = regex ? paramMatch(path) : NULL,
       .handler = handler,
   };
   routeHandlers[routeHandlerCount++] = routeHandler;
@@ -702,44 +702,44 @@ static request_t parseRequest(client_t client)
 {
   request_t req = {.url = NULL, .queryString = "", .path = NULL, .method = NULL, .rawRequest = NULL};
 
-  char buf[4096];
-  memset(buf, 0, sizeof(buf));
+  char buffer[4096];
+  memset(buffer, 0, sizeof(buffer));
   char *method, *url;
-  int pret, minor_version;
+  int parseBytes, minorVersion;
   struct phr_header headers[100];
-  size_t buflen = 0, prevbuflen = 0, method_len, url_len, num_headers;
-  ssize_t rret;
+  size_t bufferLen = 0, prevBufferLen = 0, methodLen, urlLen, numHeaders;
+  ssize_t readBytes;
 
   // TODO: timeout support
   while (1)
   {
-    while ((rret = read(client.socket, buf + buflen, sizeof(buf) - buflen)) == -1)
+    while ((readBytes = read(client.socket, buffer + bufferLen, sizeof(buffer) - bufferLen)) == -1)
       ;
-    if (rret <= 0)
+    if (readBytes <= 0)
       return req;
-    prevbuflen = buflen;
-    buflen += rret;
-    num_headers = sizeof(headers) / sizeof(headers[0]);
-    pret = phr_parse_request(buf, buflen, (const char **)&method, &method_len, (const char **)&url, &url_len,
-                             &minor_version, headers, &num_headers, prevbuflen);
-    if (pret > 0)
+    prevBufferLen = bufferLen;
+    bufferLen += readBytes;
+    numHeaders = sizeof(headers) / sizeof(headers[0]);
+    parseBytes = phr_parse_request(buffer, bufferLen, (const char **)&method, &methodLen, (const char **)&url, &urlLen,
+                                   &minorVersion, headers, &numHeaders, prevBufferLen);
+    if (parseBytes > 0)
     {
-      if (method[0] == 'P' && pret == rret)
-        while ((read(client.socket, buf + buflen, sizeof(buf) - buflen)) == -1)
+      if (method[0] == 'P' && parseBytes == readBytes)
+        while ((read(client.socket, buffer + bufferLen, sizeof(buffer) - bufferLen)) == -1)
           ;
       break;
     }
-    else if (pret == -1)
+    else if (parseBytes == -1)
       return req;
-    assert(pret == -2);
-    if (buflen == sizeof(buf))
+    assert(parseBytes == -2);
+    if (bufferLen == sizeof(buffer))
       return req;
   }
 
-  req.rawRequest = buf;
+  req.rawRequest = buffer;
 
   req.headersHash = hash_new();
-  for (size_t i = 0; i != num_headers; ++i)
+  for (size_t i = 0; i != numHeaders; ++i)
   {
     char *key = malloc(headers[i].name_len + 1);
     sprintf(key, "%.*s", (int)headers[i].name_len, headers[i].name);
@@ -748,23 +748,23 @@ static request_t parseRequest(client_t client)
     hash_set(req.headersHash, key, value);
   }
 
-  req.method = malloc(method_len + 1);
-  memcpy(req.method, method, method_len);
-  req.method[method_len] = '\0';
+  req.method = malloc(methodLen + 1);
+  memcpy(req.method, method, methodLen);
+  req.method[methodLen] = '\0';
 
-  req.url = malloc(url_len + 1);
-  memcpy(req.url, url, url_len);
-  req.url[url_len] = '\0';
+  req.url = malloc(urlLen + 1);
+  memcpy(req.url, url, urlLen);
+  req.url[urlLen] = '\0';
 
   char *copy = strdup(req.url);
   char *queryStringStart = strchr(copy, '?');
 
   if (queryStringStart)
   {
-    int queryString_len = strlen(queryStringStart + 1);
-    req.queryString = malloc(queryString_len + 1);
-    memcpy(req.queryString, queryStringStart + 1, queryString_len);
-    req.queryString[queryString_len] = '\0';
+    int queryStringLen = strlen(queryStringStart + 1);
+    req.queryString = malloc(queryStringLen + 1);
+    memcpy(req.queryString, queryStringStart + 1, queryStringLen);
+    req.queryString[queryStringLen] = '\0';
     *queryStringStart = '\0';
     req.queryHash = hash_new();
     parseQueryString(req.queryHash, req.queryString);
@@ -789,7 +789,7 @@ static route_handler_t matchRouteHandler(request_t *req)
   {
     if (strcmp(routeHandlers[i].method, req->method) != 0)
       continue;
-    param_match_t *pm = routeHandlers[i].param_match;
+    param_match_t *pm = routeHandlers[i].paramMatch;
     if (pm != NULL)
     {
       char *values[pm->count];
