@@ -54,7 +54,7 @@ int main()
   dispatch_queue_t q = dispatch_queue_create("server_queue", DISPATCH_QUEUE_CONCURRENT);
   dispatch_source_t acceptSource = dispatch_source_create(DISPATCH_SOURCE_TYPE_READ, servSock, 0, q);
   dispatch_source_set_event_handler(acceptSource, ^{
-    printf("acceptSource\n");
+    // printf("acceptSource\n");
     const unsigned long numPendingConnections = dispatch_source_get_data(acceptSource);
     for (unsigned long i = 0; i < numPendingConnections; i++)
     {
@@ -68,16 +68,16 @@ int main()
 
         dispatch_queue_t dqc = dispatch_queue_create("client", DISPATCH_QUEUE_CONCURRENT);
 
-        printf("server sock: %d accepted\n", clntSock);
+        // printf("server sock: %d accepted\n", clntSock);
 
         dispatch_semaphore_t sem = dispatch_semaphore_create(0);
 
         dispatch_io_t channel = dispatch_io_create(DISPATCH_IO_STREAM, clntSock, dqc, ^(int error) {
           if (error)
           {
-            fprintf(stderr, "Error: %s\n", strerror(error));
+            // fprintf(stderr, "Error: %s\n", strerror(error));
           }
-          printf("server sock: %d closing\n", clntSock);
+          // printf("server sock: %d closing\n", clntSock);
           close(clntSock);
         });
 
@@ -90,7 +90,7 @@ int main()
           int close_channel = 0;
           if (error)
           {
-            fprintf(stderr, "Error: %s", strerror(error));
+            // fprintf(stderr, "Error: %s", strerror(error));
             close_channel = 1;
           }
 
@@ -98,7 +98,7 @@ int main()
           if (rxd)
           {
             // echo...
-            printf("server sock: %d received: %ld bytes\n", clntSock, (long)rxd);
+            // printf("server sock: %d received: %ld bytes\n", clntSock, (long)rxd);
             // write it back out; echo!
             dispatch_io_write(channel, 0, data, dqc, ^(bool done, dispatch_data_t data, int error) {
               dispatch_semaphore_signal(sem);
@@ -116,7 +116,7 @@ int main()
           }
         });
         dispatch_semaphore_wait(sem, DISPATCH_TIME_FOREVER);
-        printf("server sock: %d closed\n", clntSock);
+        // printf("server sock: %d closed\n", clntSock);
         dispatch_io_close(channel, DISPATCH_IO_STOP);
         // close(clntSock);
       }

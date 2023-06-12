@@ -40,7 +40,10 @@
     "ratio": "c",
     "system_error": "c",
     "inet.h": "c",
-    "regex.h": "c"
+    "regex.h": "c",
+    "sstream": "c",
+    "ostream": "c",
+    "stdlib.h": "c"
   },
   "C_Cpp.errorSquiggles": "Disabled"
 }
